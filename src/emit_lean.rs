@@ -8,94 +8,13 @@ use crate::stamp::{StampedBody, StampedSystem};
 
 /// Convert an `f64` into an exact Lean 4 `TranscendentalField` constructor term without exponent clamping.
 pub fn format_lean_rat_call(v: f64) -> String {
-    if !v.is_finite() || v == 0.0 {
-        return "TF.zero".to_string();
-    }
-    if v == 1.0 {
-        return "TF.one".to_string();
-    }
-    let sign = if v < 0.0 { -1i128 } else { 1i128 };
-    let av = v.abs();
-    let sci = format!("{av:.12e}");
-    if let Some((m_str, e_str)) = sci.split_once('e') {
-        if let Ok(exp10) = e_str.parse::<i32>() {
-            let digits: String = m_str.chars().filter(|c| *c != '.').collect();
-            let frac_digits = m_str
-                .split_once('.')
-                .map_or(0i32, |(_, frac)| frac.len() as i32);
-            if let Ok(mut mant) = digits.parse::<i128>() {
-                let mut net_exp = exp10 - frac_digits;
-                while mant != 0 && mant % 10 == 0 {
-                    mant /= 10;
-                    net_exp += 1;
-                }
-                if net_exp == 0 {
-                    let num = sign * mant;
-                    return if num < 0 {
-                        format!("(TF.ofInt ({num}))")
-                    } else {
-                        format!("(TF.ofInt {num})")
-                    };
-                }
-                if (1..=18).contains(&net_exp) {
-                    let mut scaled = mant;
-                    for _ in 0..(net_exp as usize) {
-                        scaled *= 10;
-                    }
-                    let num = sign * scaled;
-                    return if num < 0 {
-                        format!("(TF.ofInt ({num}))")
-                    } else {
-                        format!("(TF.ofInt {num})")
-                    };
-                }
-                if (-18..=-1).contains(&net_exp) {
-                    let mut den: i128 = 1;
-                    for _ in 0..((-net_exp) as usize) {
-                        den *= 10;
-                    }
-                    let g = gcd_u128(mant.unsigned_abs(), den.unsigned_abs()) as i128;
-                    let num = sign * (mant / g);
-                    let den_red = den / g;
-                    if den_red == 1 {
-                        return if num < 0 {
-                            format!("(TF.ofInt ({num}))")
-                        } else {
-                            format!("(TF.ofInt {num})")
-                        };
-                    }
-                    return if num < 0 {
-                        format!("(TF.ofRat ({num}) {den_red})")
-                    } else {
-                        format!("(TF.ofRat {num} {den_red})")
-                    };
-                }
-                // Arbitrary scientific exponent (`|net_exp| > 18`): exact `TF.pow10` without clamping!
-                let signed_mant = sign * mant;
-                let mant_term = if signed_mant < 0 {
-                    format!("(TF.ofInt ({signed_mant}))")
-                } else {
-                    format!("(TF.ofInt {signed_mant})")
-                };
-                return if net_exp > 0 {
-                    format!("(TF.mul {mant_term} (TF.pow10 {net_exp}))")
-                } else {
-                    let k = -net_exp;
-                    format!("(TF.div {mant_term} (TF.pow10 {k}))")
-                };
-            }
-        }
-    }
-    "TF.zero".to_string()
-}
-
-fn gcd_u128(mut a: u128, mut b: u128) -> u128 {
-    while b != 0 {
-        let r = a % b;
-        a = b;
-        b = r;
-    }
-    a.max(1)
+    let (negative, numerator, denominator) = crate::numeral::exact_f64_to_rat(v)
+        .expect("emitter requires finite stamped constants");
+    if numerator == "0" { return "TF.zero".to_string(); }
+    if numerator == "1" && denominator == "1" && !negative { return "TF.one".to_string(); }
+    let numerator = if negative { format!("(-{numerator})") } else { numerator };
+    if denominator == "1" { format!("(TF.ofInt {numerator})") }
+    else { format!("(TF.ofRat {numerator} {denominator})") }
 }
 
 fn emit_expr_lean(e: &Expr) -> String {
@@ -110,6 +29,7 @@ fn emit_expr_lean(e: &Expr) -> String {
         Expr::Mul(a, b) => format!("(TF.mul {} {})", emit_expr_lean(a), emit_expr_lean(b)),
         Expr::Div(a, b) => format!("(TF.div {} {})", emit_expr_lean(a), emit_expr_lean(b)),
         Expr::Exp(a) => format!("(TF.exp {})", emit_expr_lean(a)),
+        Expr::Sqrt(a) => format!("(TF.sqrt {})", emit_expr_lean(a)),
         Expr::Ln1pExp(a) => format!("(TF.ln1pExp {})", emit_expr_lean(a)),
     }
 }
@@ -145,6 +65,51 @@ fn emit_formula_lean(f: &Formula) -> String {
         }
         Formula::Not(inner) => format!("(¬ {})", emit_formula_lean(inner)),
     }
+}
+
+// Share repeated arithmetic subterms within each proposition. The emitted lets are
+// definitionally equal to the expanded expression, keeping large transient stamps
+// cheap for Lean's elaborator without changing their mathematical specification.
+fn share_subterms(source: &str) -> String {
+    if source.len() < 2000 { return source.to_owned(); }
+    fn visit(source: &str, cache: &mut BTreeMap<String, String>, defs: &mut Vec<String>) -> String {
+        let mut out = String::new();
+        let mut start = 0;
+        while let Some(offset) = source[start..].find('(') {
+            let begin = start + offset;
+            out.push_str(&source[start..begin]);
+            let mut depth = 1;
+            let mut end = begin + 1;
+            while depth > 0 {
+                match source.as_bytes()[end] { b'(' => depth += 1, b')' => depth -= 1, _ => {} }
+                end += 1;
+            }
+            let inner = visit(&source[begin+1..end-1], cache, defs);
+            let term = format!("({inner})");
+            if inner.starts_with("TF.") && term.len() > 80 {
+                let name = if let Some(name) = cache.get(&term) { name.clone() } else {
+                    let name = format!("«shared{}»", defs.len());
+                    defs.push(format!("let {name} := {term}; "));
+                    cache.insert(term, name.clone());
+                    name
+                };
+                out.push_str(&name);
+            } else { out.push_str(&term); }
+            start = end;
+        }
+        out.push_str(&source[start..]);
+        out
+    }
+    let mut defs = Vec::new();
+    let result = visit(source, &mut BTreeMap::new(), &mut defs);
+    format!("({}{result})", defs.join(""))
+}
+
+fn conjunction(parts: &[String]) -> String {
+    if parts.is_empty() { return "True".into(); }
+    if parts.len() <= 16 { return parts.join(" ∧\n    "); }
+    let mid = parts.len()/2;
+    format!("({}) ∧ ({})", conjunction(&parts[..mid]), conjunction(&parts[mid..]))
 }
 
 fn sanitize_lean_ident(raw: &str) -> String {
@@ -189,9 +154,9 @@ pub fn emit_lean_def(sys: &StampedSystem, def_name: &str, include_imports: bool)
     )
     .unwrap();
 
-    let mut all_binders: Vec<(String, f64, f64)> = Vec::new();
+    let mut all_binders: Vec<(String, Option<(f64, f64)>)> = Vec::new();
     for p in &sys.params {
-        all_binders.push((sanitize_lean_ident(&p.name), p.lo, p.hi));
+        all_binders.push((sanitize_lean_ident(&p.name), Some((p.lo, p.hi))));
     }
 
     let mut eq_hyps: Vec<String> = Vec::new();
@@ -199,102 +164,28 @@ pub fn emit_lean_def(sys: &StampedSystem, def_name: &str, include_imports: bool)
     let unsafe_prop: String = match &sys.body {
         StampedBody::Algebraic { vars, constraints } => {
             for v in vars {
-                all_binders.push((sanitize_lean_ident(&v.name), v.lo, v.hi));
+                all_binders.push((sanitize_lean_ident(&v.name), v.bounds));
             }
             for c in constraints {
                 eq_hyps.push(emit_formula_lean(&c.formula));
             }
             emit_formula_lean(&sys.unsafe_formula)
         }
-        StampedBody::Ode {
-            static_vars,
-            static_constraints,
-            states,
-            dt,
-            steps,
-            method,
-        } => {
-            for v in static_vars {
-                all_binders.push((sanitize_lean_ident(&v.name), v.lo, v.hi));
-            }
-            for c in static_constraints {
-                eq_hyps.push(emit_formula_lean(&c.formula));
-            }
-            let empty_nodes = BTreeMap::new();
-            let mut step_maps = Vec::with_capacity(*steps + 1);
-            for k in 0..=*steps {
-                let mut m = BTreeMap::new();
-                for st in states {
-                    let sk = format!("{}_s{k}", st.name);
-                    all_binders.push((sanitize_lean_ident(&sk), st.lo, st.hi));
-                    m.insert(st.name.clone(), Expr::var(sk));
-                }
-                step_maps.push(m);
-            }
-            for st in states {
-                let s0 = sanitize_lean_ident(&format!("{}_s0", st.name));
-                match &st.init {
-                    InitSpec::Interval(lo, hi) => {
-                        eq_hyps.push(format!(
-                            "(TF.le {} {s0} ∧ TF.le {s0} {})",
-                            format_lean_rat_call(*lo),
-                            format_lean_rat_call(*hi)
-                        ));
-                    }
-                    InitSpec::Exact(e) => {
-                        let sub = e.substitute(&step_maps[0], &empty_nodes, Some(&Expr::num(0.0)));
-                        eq_hyps.push(format!("({s0} = {})", emit_expr_lean(&sub)));
-                    }
-                }
-            }
-            let mut u_disj = Vec::with_capacity(*steps);
-            for k in 1..=*steps {
-                let tk = Expr::num((k as f64) * (*dt));
-                let tk_prev = Expr::num(((k - 1) as f64) * (*dt));
-                for st in states {
-                    let xk = Expr::var(format!("{}_s{k}", st.name));
-                    let xkp = Expr::var(format!("{}_s{}", st.name, k - 1));
-                    let fk = st.rhs.substitute(&step_maps[k], &empty_nodes, Some(&tk));
-                    let rhs = match method {
-                        TranMethod::BackwardEuler => Expr::add(xkp, Expr::mul(Expr::num(*dt), fk)),
-                        TranMethod::Trapezoidal => {
-                            let fkp =
-                                st.rhs
-                                    .substitute(&step_maps[k - 1], &empty_nodes, Some(&tk_prev));
-                            Expr::add(
-                                xkp,
-                                Expr::mul(Expr::num(0.5 * (*dt)), Expr::add(fkp, fk)),
-                            )
-                        }
-                    };
-                    eq_hyps.push(format!(
-                        "({} = {})",
-                        emit_expr_lean(&xk),
-                        emit_expr_lean(&rhs)
-                    ));
-                }
-                u_disj.push(emit_formula_lean(&sys.unsafe_formula.substitute(
-                    &step_maps[k],
-                    &empty_nodes,
-                    Some(&tk),
-                )));
-            }
-            format!("({})", u_disj.join(" ∨ "))
-        }
+        StampedBody::Ode { .. } => return emit_lean_ode_def(sys, def_name, include_imports),
     };
 
+    let eq_hyps: Vec<_> = eq_hyps.iter().map(|s| share_subterms(s)).collect();
     let quant = if is_sat { "∃" } else { "∀" };
     write!(out, "  {quant} (").unwrap();
-    for (i, (bname, _, _)) in all_binders.iter().enumerate() {
-        if i > 0 {
-            write!(out, " ").unwrap();
-        }
+    for (i, (bname, _)) in all_binders.iter().enumerate() {
+        if i > 0 { write!(out, " ").unwrap(); }
         write!(out, "{bname}").unwrap();
     }
     writeln!(out, " : R),").unwrap();
 
     let mut box_conjuncts = Vec::with_capacity(all_binders.len());
-    for (bname, lo, hi) in &all_binders {
+    for (bname, bounds) in &all_binders {
+        let Some((lo, hi)) = bounds else { continue; };
         box_conjuncts.push(format!(
             "(TF.le {} {bname} ∧ TF.le {bname} {})",
             format_lean_rat_call(*lo),
@@ -304,12 +195,12 @@ pub fn emit_lean_def(sys: &StampedSystem, def_name: &str, include_imports: bool)
     let box_str = if box_conjuncts.is_empty() {
         "True".to_string()
     } else {
-        box_conjuncts.join(" ∧\n    ")
+        conjunction(&box_conjuncts)
     };
     let phys_str = if eq_hyps.is_empty() {
         "True".to_string()
     } else {
-        eq_hyps.join(" ∧\n    ")
+        conjunction(&eq_hyps)
     };
 
     if is_sat {
@@ -326,5 +217,87 @@ pub fn emit_lean_def(sys: &StampedSystem, def_name: &str, include_imports: bool)
         writeln!(out).unwrap();
         writeln!(out, "end SpiceSmtBench.Targets").unwrap();
     }
+    out
+}
+
+/// Keep the finite time index symbolic in Lean. This states precisely the same
+/// recurrence as SMT unrolling, including its individually rounded sample times,
+/// without duplicating the entire device model at every step.
+fn emit_lean_ode_def(sys: &StampedSystem, def_name: &str, imports: bool) -> String {
+    let StampedBody::Ode { static_vars, static_constraints, states, dt, steps, method } = &sys.body else { unreachable!() };
+    let mut out = String::new();
+    if imports { out.push_str("import SpiceSmtBench.PhysicsModels\nnamespace SpiceSmtBench.Targets\n\n"); }
+    writeln!(out, "/-- {}: finite sampled transient target, including sample zero. -/", sys.title).unwrap();
+    writeln!(out, "def {} {{R : Type}} (TF : TranscendentalField R) : Prop :=", sanitize_ident(def_name)).unwrap();
+    let sat = sys.expected == Some(ExpectedStatus::Sat);
+    let quant = if sat { "∃" } else { "∀" };
+    let mut binders: Vec<_> = sys.params.iter().map(|p| (p.name.clone(), Some((p.lo,p.hi)))).collect();
+    binders.extend(static_vars.iter().map(|v| (v.name.clone(), v.bounds)));
+    if !binders.is_empty() {
+        writeln!(out, "  {quant} ({} : R),", binders.iter().map(|(n,_)| sanitize_lean_ident(n)).collect::<Vec<_>>().join(" ")).unwrap();
+    }
+    writeln!(out, "  {quant} (state : Nat → Nat → R),").unwrap();
+    let times: Vec<_> = (0..=*steps).map(|k| format_lean_rat_call(k as f64 * dt)).collect();
+    writeln!(out, "    let _sampleTime : Nat → R := fun k => ([{}] : List R).getD k TF.zero", times.join(", ")).unwrap();
+    let mut replacements = BTreeMap::new();
+    let mut current = BTreeMap::new();
+    let mut next = BTreeMap::new();
+    for (i, st) in states.iter().enumerate() {
+        let here = format!("sampleHere{i}"); let there = format!("sampleNext{i}");
+        current.insert(st.name.clone(), Expr::var(&here)); next.insert(st.name.clone(), Expr::var(&there));
+        replacements.insert(here, format!("(state k {i})"));
+        replacements.insert(there, format!("(state (k+1) {i})"));
+        replacements.insert(format!("derivativeHere{i}"), format!("(dx k {i})"));
+        replacements.insert(format!("derivativeNext{i}"), format!("(dx (k+1) {i})"));
+    }
+    replacements.insert("sampleTimeHere".into(), "(_sampleTime k)".into());
+    replacements.insert("sampleTimeNext".into(), "(_sampleTime (k+1))".into());
+    let rewrite = |text: String| {
+        let mut result = String::new(); let mut start = 0;
+        while start < text.len() {
+            let c = text[start..].chars().next().unwrap();
+            if c.is_ascii_alphabetic() || c == '_' {
+                let end = start + text[start..].bytes().take_while(|c| c.is_ascii_alphanumeric() || *c == b'_').count();
+                let word = &text[start..end];
+                result.push_str(replacements.get(word).map_or(word, String::as_str)); start = end;
+            } else { result.push(c); start += c.len_utf8(); }
+        }
+        result
+    };
+    let nodes = BTreeMap::new();
+    let time = Expr::var("sampleTimeHere");
+    let mut physics: Vec<_> = static_constraints.iter().map(|c| emit_formula_lean(&c.formula)).collect();
+    let mut bounds = Vec::new();
+    for (name, interval) in &binders {
+        if let Some((lo,hi)) = interval {
+            bounds.push(format!("(TF.le {} {} ∧ TF.le {} {})",format_lean_rat_call(*lo),sanitize_lean_ident(name),sanitize_lean_ident(name),format_lean_rat_call(*hi)));
+        }
+    }
+    let mut derivatives = Vec::new();
+    let mut state_bounds = Vec::new(); let mut initial = Vec::new(); let mut recurrence = Vec::new();
+    for (i, st) in states.iter().enumerate() {
+        state_bounds.push(format!("(TF.le {} (state k {i}) ∧ TF.le (state k {i}) {})",format_lean_rat_call(st.lo),format_lean_rat_call(st.hi)));
+        let init = match &st.init {
+            InitSpec::Exact(e) => format!("(state k {i} = {})",rewrite(emit_expr_lean(&e.substitute(&current,&nodes,Some(&Expr::num(0.0)))))),
+            InitSpec::Interval(lo,hi) => format!("(TF.le {} (state k {i}) ∧ TF.le (state k {i}) {})",format_lean_rat_call(*lo),format_lean_rat_call(*hi)),
+        };
+        initial.push(init);
+        derivatives.push(rewrite(share_subterms(&emit_expr_lean(&st.rhs.substitute(&current,&nodes,Some(&time))))));
+        let fnext = Expr::var(format!("derivativeNext{i}"));
+        let rhs = match method {
+            TranMethod::BackwardEuler => Expr::add(current[&st.name].clone(),Expr::mul(Expr::num(*dt),fnext)),
+            TranMethod::Trapezoidal => Expr::add(current[&st.name].clone(),Expr::mul(Expr::num(0.5 * dt),Expr::add(Expr::var(format!("derivativeHere{i}")),fnext))),
+        };
+        recurrence.push(rewrite(share_subterms(&format!("(sampleNext{i} = {})",emit_expr_lean(&rhs)))));
+    }
+    writeln!(out, "    let dx : Nat → Nat → R := fun k i => ([{}] : List R).getD i TF.zero", derivatives.join(", ")).unwrap();
+    bounds.push(format!("(∀ k : Nat, k ≤ {steps} → ({}))",conjunction(&state_bounds)));
+    physics.push(format!("(let k : Nat := 0; {})",conjunction(&initial)));
+    physics.push(format!("(∀ k : Nat, k < {steps} → ({}))",conjunction(&recurrence)));
+    let unsafe_prop = rewrite(emit_formula_lean(&sys.unsafe_formula.substitute(&current,&nodes,Some(&time))));
+    let unsafe_prop = format!("(∃ k : Nat, k ≤ {steps} ∧ {unsafe_prop})");
+    let separator = if sat { "∧" } else { "→" };
+    writeln!(out,"    ({}) {separator}\n    ({}) {separator}\n    {}{unsafe_prop}",conjunction(&bounds),conjunction(&physics),if sat {""} else {"¬ "}).unwrap();
+    if imports { out.push_str("\nend SpiceSmtBench.Targets\n"); }
     out
 }

@@ -81,6 +81,12 @@ pub struct PdkProfile {
     pub default_models: Vec<ModelDecl>,
 }
 
+/// Infinite-well confinement coefficient in V nm², using the transverse mass / m_e.
+fn confinement_alpha(relative_mass: f64) -> f64 {
+    let hbar: f64 = 1.054_571_817e-34;
+    hbar.powi(2) * std::f64::consts::PI.powi(2) / (2.0 * 1.602_176_634e-19 * relative_mass * 9.109_383_701_5e-31) * 1e18
+}
+
 fn model_card(name: &str, kind: ModelKind, kvs: &[(&str, f64)]) -> ModelDecl {
     let mut params = BTreeMap::new();
     for (k, v) in kvs {
@@ -109,14 +115,14 @@ impl PdkId {
                         "ASAP7_NFET_RVT",
                         ModelKind::FinFetN,
                         &[
-                            ("is0", 1.8e-6),
+                            ("is0", 3.0e-7),
                             ("vt0", 0.27),
                             ("kappa", 0.86),
                             ("lg_nm", 21.0),
                             ("tfin_nm", 6.5),
                             ("hfin_nm", 32.0),
                             ("eot_nm", 1.0),
-                            ("alpha_qm", 1.71),
+                            ("alpha_qm", confinement_alpha(0.45)),
                             ("eta_dibl0", 3.2),
                         ],
                     ),
@@ -124,14 +130,14 @@ impl PdkId {
                         "ASAP7_PFET_RVT",
                         ModelKind::FinFetP,
                         &[
-                            ("is0", 1.45e-6),
+                            ("is0", 2.6e-7),
                             ("vt0", 0.28),
                             ("kappa", 0.85),
                             ("lg_nm", 21.0),
                             ("tfin_nm", 6.5),
                             ("hfin_nm", 32.0),
                             ("eot_nm", 1.0),
-                            ("alpha_qm", 1.71),
+                            ("alpha_qm", confinement_alpha(0.45)),
                             ("eta_dibl0", 3.4),
                         ],
                     ),
@@ -139,14 +145,14 @@ impl PdkId {
                         "ASAP7_NFET_SLVT",
                         ModelKind::FinFetN,
                         &[
-                            ("is0", 2.2e-6),
+                            ("is0", 3.2e-7),
                             ("vt0", 0.19),
                             ("kappa", 0.88),
                             ("lg_nm", 21.0),
                             ("tfin_nm", 6.5),
                             ("hfin_nm", 32.0),
                             ("eot_nm", 1.0),
-                            ("alpha_qm", 1.71),
+                            ("alpha_qm", confinement_alpha(0.45)),
                             ("eta_dibl0", 3.2),
                         ],
                     ),
@@ -154,14 +160,14 @@ impl PdkId {
                         "ASAP7_PFET_SLVT",
                         ModelKind::FinFetP,
                         &[
-                            ("is0", 1.85e-6),
+                            ("is0", 2.8e-7),
                             ("vt0", 0.20),
                             ("kappa", 0.87),
                             ("lg_nm", 21.0),
                             ("tfin_nm", 6.5),
                             ("hfin_nm", 32.0),
                             ("eot_nm", 1.0),
-                            ("alpha_qm", 1.71),
+                            ("alpha_qm", confinement_alpha(0.45)),
                             ("eta_dibl0", 3.4),
                         ],
                     ),
@@ -169,14 +175,14 @@ impl PdkId {
                         "ASAP7_NFET_SRAM",
                         ModelKind::FinFetN,
                         &[
-                            ("is0", 1.55e-6),
+                            ("is0", 3.0e-7),
                             ("vt0", 0.32),
                             ("kappa", 0.85),
                             ("lg_nm", 21.0),
                             ("tfin_nm", 6.5),
                             ("hfin_nm", 32.0),
                             ("eot_nm", 1.0),
-                            ("alpha_qm", 1.71),
+                            ("alpha_qm", confinement_alpha(0.45)),
                             ("eta_dibl0", 3.0),
                         ],
                     ),
@@ -184,14 +190,14 @@ impl PdkId {
                         "ASAP7_PFET_SRAM",
                         ModelKind::FinFetP,
                         &[
-                            ("is0", 1.25e-6),
+                            ("is0", 2.6e-7),
                             ("vt0", 0.33),
                             ("kappa", 0.84),
                             ("lg_nm", 21.0),
                             ("tfin_nm", 6.5),
                             ("hfin_nm", 32.0),
                             ("eot_nm", 1.0),
-                            ("alpha_qm", 1.71),
+                            ("alpha_qm", confinement_alpha(0.45)),
                             ("eta_dibl0", 3.2),
                         ],
                     ),
@@ -209,7 +215,7 @@ impl PdkId {
                         "GT2N_NFET_GAA",
                         ModelKind::GaaNmos,
                         &[
-                            ("is0", 2.6e-6),
+                            ("is0", 2.5e-7),
                             ("vt0", 0.23),
                             ("kappa", 0.91),
                             ("lg_nm", 12.0),
@@ -218,16 +224,16 @@ impl PdkId {
                             ("nsheet", 3.0),
                             ("eot_nm", 0.85),
                             ("lisp_nm", 5.5),
-                            ("alpha_qm", 1.71),
+                            ("alpha_qm", confinement_alpha(0.41)),
                             ("eta_dibl0", 2.8),
-                            ("kt_vth", 0.00085),
+                            ("kt_vth", -0.00085),
                         ],
                     ),
                     model_card(
                         "GT2N_PFET_GAA",
                         ModelKind::GaaPmos,
                         &[
-                            ("is0", 2.25e-6),
+                            ("is0", 2.2e-7),
                             ("vt0", 0.24),
                             ("kappa", 0.90),
                             ("lg_nm", 12.0),
@@ -236,9 +242,9 @@ impl PdkId {
                             ("nsheet", 3.0),
                             ("eot_nm", 0.85),
                             ("lisp_nm", 5.5),
-                            ("alpha_qm", 1.71),
+                            ("alpha_qm", confinement_alpha(0.41)),
                             ("eta_dibl0", 2.9),
-                            ("kt_vth", 0.00085),
+                            ("kt_vth", -0.00085),
                         ],
                     ),
                 ],
@@ -260,6 +266,7 @@ impl PdkId {
                             ("br", 8.0),
                             ("deg_ev", 0.085),
                             ("ikirk", 0.012),
+                            ("vaf", 45.0),
                         ],
                     ),
                     model_card(
@@ -286,7 +293,7 @@ impl PdkId {
                         "GAN_EHEMT_100V",
                         ModelKind::GanHemt,
                         &[
-                            ("is0", 0.018),
+                            ("is0", 1.0e-6),
                             ("vt0", 1.45),
                             ("kappa", 0.82),
                             ("vtheta", 0.12),
@@ -294,7 +301,7 @@ impl PdkId {
                     ),
                     model_card(
                         "GAN_CGD_MILLER",
-                        ModelKind::Mlcc,
+                        ModelKind::DepletionCap,
                         &[
                             ("c0", 42e-12),
                             ("cmin", 3.5e-12),
@@ -326,7 +333,7 @@ impl PdkId {
                         &[("is0", 2.4e-7), ("vt0", 0.60), ("kappa", 0.70)],
                     ),
                     model_card("GF180_SCR_NPN", ModelKind::Npn, &[("is", 2.5e-16), ("bf", 45.0), ("br", 2.0)]),
-                    model_card("GF180_SCR_PNP", ModelKind::Pnp, &[("is", 1.8e-16), ("bf", 18.0), ("br", 1.5)]),
+                    model_card("GF180_SCR_PNP", ModelKind::Pnp, &[("is", 1.8e-16), ("bf", 18.0), ("br", 2.0)]),
                 ],
             },
             PdkId::Sky130 => PdkProfile {

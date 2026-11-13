@@ -1,27 +1,28 @@
 * Suite C-12a: Differential Pair Crossing Split Return-Plane Slot With Fiber-Weave Skew (EMI SAT)
 .expected sat
-.mode tran dt=8.0e-11 steps=6 method=be
+.mode tran dt=1.0e-11 steps=80 method=trap
 .default_vbound [-1.5, 2.5]
 
 * Fiber-weave skew (er_p != er_n) converts differential edge into return-plane slot current -> ground bounce!
 .param er_p   [4.40, 4.70]
 .param er_n   [3.80, 4.05]
-.param l_slot [3.5e-9, 6.0e-9]
+.param slot_width [0.007, 0.012]
+.const l_slot = 5e-7 * slot_width
 
-.bound v(in_p)    [-0.2, 1.5]
-.bound v(in_n)    [-0.2, 1.5]
-.bound v(out_p)   [-0.6, 1.8]
-.bound v(out_n)   [-0.6, 1.8]
+.bound v(in_p)    [-1.5, 1.5]
+.bound v(in_n)    [-1.5, 1.5]
+.bound v(out_p)   [-1.8, 1.8]
+.bound v(out_n)   [-1.8, 1.8]
 .bound v(gnd_rx)  [-0.8, 0.8]
 
 .init v(in_p)   = 0.0
-.init v(in_n)   = 1.0
+.init v(in_n)   = 0.0
 .init v(out_p)  = 0.0
-.init v(out_n)  = 1.0
+.init v(out_n)  = 0.0
 .init v(gnd_rx) = 0.0
 
-Vdp drv_p 0 STEP(base=0.0 step=1.0  t0=8.0e-11 tau=3.5e-11)
-Vdn drv_n 0 STEP(base=1.0 step=-1.0 t0=8.0e-11 tau=3.5e-11)
+Vdp drv_p 0 STEP(base=0.0 step=1.0  t0=8.0e-11 tau=1.0e-11)
+Vdn drv_n 0 STEP(base=0.0 step=-1.0 t0=8.0e-11 tau=1.0e-11)
 Rdp drv_p in_p 25.0
 Rdn drv_n in_n 25.0
 

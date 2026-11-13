@@ -42,7 +42,7 @@ pub enum AnalysisMode {
 /// Output target dialect for `spice2smt`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Dialect {
-    /// Standard SMT-LIB2 `QF_NRA` extended with transcendental `(exp ...)`.
+    /// SMT-LIB2 with logic `ALL` and transcendental `(exp ...)`.
     /// Lowers `ln(1 + exp(z))` and `ln(...)` purely to `exp` via auxiliary variables,
     /// and lowers `.mode tran` to implicit Backward-Euler or Trapezoidal algebraic steps.
     Smt2Exp,
@@ -70,6 +70,7 @@ pub enum Expr {
     /// Lowered to pure `exp` auxiliary constraint `exp(y) = 1 + exp(z), y > 0` in `smt2-exp`,
     /// or `(log (+ 1.0 (exp z)))` inside explicit `dreal-ode` vector fields.
     Ln1pExp(Box<Expr>),
+    Sqrt(Box<Expr>),
 }
 
 #[allow(clippy::should_implement_trait)]
@@ -145,8 +146,22 @@ impl Expr {
         Expr::Exp(Box::new(a))
     }
 
+    pub fn sqrt(a: Expr) -> Self { Expr::Sqrt(Box::new(a)) }
+
     pub fn ln1p_exp(a: Expr) -> Self {
         Expr::Ln1pExp(Box::new(a))
+    }
+
+    /// Traverse every expression node, including intermediate arithmetic.
+    pub fn visit(&self, f: &mut impl FnMut(&Expr)) {
+        f(self);
+        match self {
+            Expr::Neg(a) | Expr::Exp(a) | Expr::Ln1pExp(a) | Expr::Sqrt(a) => a.visit(f),
+            Expr::Add(a,b) | Expr::Sub(a,b) | Expr::Mul(a,b) | Expr::Div(a,b) => {
+                a.visit(f); b.visit(f);
+            }
+            _ => {}
+        }
     }
 
     /// Substitute named constants and fixed node voltages recursively.
@@ -192,6 +207,7 @@ impl Expr {
                 a.substitute(var_map, node_map, time_expr),
                 b.substitute(var_map, node_map, time_expr),
             ),
+            Expr::Sqrt(e) => Expr::sqrt(e.substitute(var_map, node_map, time_expr)),
             Expr::Exp(e) => Expr::exp(e.substitute(var_map, node_map, time_expr)),
             Expr::Ln1pExp(e) => Expr::ln1p_exp(e.substitute(var_map, node_map, time_expr)),
         }
@@ -229,6 +245,7 @@ impl Expr {
                     Ok(a.eval_f64(env, t)? / den)
                 }
             }
+            Expr::Sqrt(e) => Ok(e.eval_f64(env, t)?.sqrt()),
             Expr::Exp(e) => Ok(e.eval_f64(env, t)?.exp()),
             Expr::Ln1pExp(e) => {
                 let z = e.eval_f64(env, t)?;
@@ -309,6 +326,9 @@ impl Formula {
             Formula::Cmp { op, lhs, rhs } => {
                 let l = lhs.eval_f64(env, t)?;
                 let r = rhs.eval_f64(env, t)?;
+                if !l.is_finite() || !r.is_finite() {
+                    return Err("non-finite comparison operand".into());
+                }
                 Ok(match op {
                     CmpOp::Eq => (l - r).abs() <= 1e-12,
                     CmpOp::Lt => l < r,
@@ -382,6 +402,7 @@ pub enum ModelKind {
     SiGeHbt,
     GanHemt,
     Mlcc,
+    DepletionCap,
 }
 
 /// Device `.model` card with parameter map.
@@ -441,7 +462,9 @@ impl Waveform {
                 } else {
                     let arg = Expr::neg(Expr::div(Expr::sub(Expr::Time, t0.clone()), tau.clone()));
                     let denom = Expr::add(Expr::num(1.0), Expr::exp(arg));
-                    Expr::add(base.clone(), Expr::div(step.clone(), denom))
+                    let initial = Expr::div(Expr::num(1.0), Expr::add(Expr::num(1.0), Expr::exp(Expr::div(t0.clone(), tau.clone()))));
+                    let transition = Expr::div(Expr::sub(Expr::div(Expr::num(1.0), denom), initial.clone()), Expr::sub(Expr::num(1.0), initial));
+                    Expr::add(base.clone(), Expr::mul(step.clone(), transition))
                 }
             }
         }
@@ -495,6 +518,7 @@ pub enum Element {
         model: String,
         area: Expr,
         vt_override: Option<Expr>,
+        temp_k: Option<Expr>,
     },
     /// Unified MOSFET / Multi-Gate FinFET (`asap7`) / Stacked GAA Nanosheet (`gt2n`) / GaN HEMT (`gan_sic`).
     Mosfet {
@@ -505,11 +529,11 @@ pub enum Element {
         n_bulk: String,
         model: String,
         /// Width `W` (for planar/HEMT) or Nanosheet width `W_ns` (for `gt2n`).
-        w: Expr,
+        w: Option<Expr>,
         /// Gate length `L_g` (supports litho uncertainty `{Lg0 + dLg}`).
-        l: Expr,
+        l: Option<Expr>,
         /// Fin count `N_fin` (`asap7`) or Nanosheet stack count `N_sheet` (`gt2n`).
-        nfin: Expr,
+        nfin: Option<Expr>,
         /// Fin or nanosheet thickness delta `dTfin` / `dTns` (nm) for quantum-confinement & DIBL.
         dtfin_nm: Expr,
         /// Workfunction / random-dopant threshold shift `dVth` (V).
@@ -542,6 +566,7 @@ pub enum Element {
         n_pos: String,
         n_neg: String,
         model: Option<String>,
+        overrides: BTreeMap<String, Expr>,
         c0: Expr,
         c_min: Expr,
         vsat: Expr,
@@ -561,6 +586,7 @@ pub enum Element {
         t_cu: Expr,
         er: Expr,
         sigma_cu: Expr,
+        n_seg: usize,
     },
     PcbCoupledDiffpair {
         name: String,
@@ -583,6 +609,8 @@ pub enum Element {
         l_via: Expr,
         l_slot: Expr,
         r_ret: Expr,
+        sigma_cu: Expr,
+        n_seg: usize,
     },
     /// 2D Cross-Section Multi-Gate FinFET TCAD (`asap7` class):
     /// Spatial `(nx x ny)` mesh across channel length `x in [0, Lg + dLg]` and fin thickness `y in [-Tfin/2, +Tfin/2]`
@@ -628,6 +656,86 @@ pub enum Element {
         temp: Expr,
         v_bias: Expr,
     },
+}
+
+impl Element {
+    pub fn nodes(&self) -> Vec<&str> {
+        match self {
+            Self::Resistor { n_pos, n_neg, .. } => vec![n_pos.as_str(), n_neg.as_str()],
+            Self::Capacitor { n_pos, n_neg, .. } => vec![n_pos.as_str(), n_neg.as_str()],
+            Self::Inductor { n_pos, n_neg, .. } => vec![n_pos.as_str(), n_neg.as_str()],
+            Self::CoupledInductors { .. } => Vec::new(),
+            Self::VoltageSource { n_pos, n_neg, .. } => vec![n_pos.as_str(), n_neg.as_str()],
+            Self::CurrentSource { n_pos, n_neg, .. } => vec![n_pos.as_str(), n_neg.as_str()],
+            Self::Diode { n_anode, n_cathode, .. } => vec![n_anode.as_str(), n_cathode.as_str()],
+            Self::Mosfet { n_drain, n_gate, n_source, n_bulk, .. } => vec![n_drain.as_str(), n_gate.as_str(), n_source.as_str(), n_bulk.as_str()],
+            Self::Bjt { n_col, n_base, n_emit, .. } => vec![n_col.as_str(), n_base.as_str(), n_emit.as_str()],
+            Self::MlccCap { n_pos, n_neg, .. } => vec![n_pos.as_str(), n_neg.as_str()],
+            Self::PcbMicrostrip { n_in, n_out, n_ref, .. } => vec![n_in.as_str(), n_out.as_str(), n_ref.as_str()],
+            Self::PcbCoupledDiffpair { in_p, in_n, out_p, out_n, ref_in, ref_out, .. } => vec![in_p.as_str(), in_n.as_str(), out_p.as_str(), out_n.as_str(), ref_in.as_str(), ref_out.as_str()],
+            Self::TcadFinFet2D { .. } => Vec::new(),
+            Self::TcadGaaElectroThermal { .. } => Vec::new(),
+            Self::TcadDiode1D { .. } => Vec::new(),
+        }
+    }
+
+    pub fn name(&self) -> &str {
+        match self {
+            Self::Resistor { name, .. } => name,
+            Self::Capacitor { name, .. } => name,
+            Self::Inductor { name, .. } => name,
+            Self::CoupledInductors { name, .. } => name,
+            Self::VoltageSource { name, .. } => name,
+            Self::CurrentSource { name, .. } => name,
+            Self::Diode { name, .. } => name,
+            Self::Mosfet { name, .. } => name,
+            Self::Bjt { name, .. } => name,
+            Self::MlccCap { name, .. } => name,
+            Self::PcbMicrostrip { name, .. } => name,
+            Self::PcbCoupledDiffpair { name, .. } => name,
+            Self::TcadFinFet2D { name, .. } => name,
+            Self::TcadGaaElectroThermal { name, .. } => name,
+            Self::TcadDiode1D { name, .. } => name,
+        }
+    }
+
+    pub fn expressions(&self) -> Vec<&Expr> {
+        match self {
+            Self::Resistor { r, .. } => vec![r],
+            Self::Capacitor { c, .. } => vec![c],
+            Self::Inductor { l, r_ser, .. } => vec![l, r_ser],
+            Self::CoupledInductors { k, .. } => vec![k],
+            Self::VoltageSource { .. } => Vec::new(),
+            Self::CurrentSource { .. } => Vec::new(),
+            Self::Diode { area, vt_override, temp_k, .. } => {
+                let mut values = vec![area];
+                values.extend(temp_k.as_ref());
+                values.extend(vt_override.as_ref());
+                values
+            },
+            Self::Mosfet { w, l, nfin, dtfin_nm, dvth, dlisp_nm, rth, vt_override, tamb_k, .. } => {
+                let mut values = vec![dtfin_nm, dvth, dlisp_nm];
+                values.extend(w.as_ref()); values.extend(l.as_ref()); values.extend(nfin.as_ref());
+                values.extend(rth.as_ref());
+                values.extend(vt_override.as_ref());
+                values.extend(tamb_k.as_ref());
+                values
+            },
+            Self::Bjt { area, deg_ev, vt_override, temp_k, .. } => {
+                let mut values = vec![area];
+                values.extend(deg_ev.as_ref());
+                values.extend(vt_override.as_ref());
+                values.extend(temp_k.as_ref());
+                values
+            },
+            Self::MlccCap { c0, c_min, vsat, esr, esl, .. } => vec![c0, c_min, vsat, esr, esl],
+            Self::PcbMicrostrip { len, w0, dw, h0, dh, t_cu, er, sigma_cu, .. } => vec![len, w0, dw, h0, dh, t_cu, er, sigma_cu],
+            Self::PcbCoupledDiffpair { len, w0, dw, s0, ds, h0, dh, t_cu, er_p, er_n, l_via, l_slot, r_ret, sigma_cu, .. } => vec![len, w0, dw, s0, ds, h0, dh, t_cu, er_p, er_n, l_via, l_slot, r_ret, sigma_cu],
+            Self::TcadFinFet2D { lg_nm, tfin_nm, eot_nm, vgs, vds, phim_shift, temp_k, nbody_cm3, .. } => vec![lg_nm, tfin_nm, eot_nm, vgs, vds, phim_shift, temp_k, nbody_cm3],
+            Self::TcadGaaElectroThermal { lg_nm, wns_nm, tns_nm, eot_nm, lisp_nm, vgs, vds, tamb_k, rth_kw, .. } => vec![lg_nm, wns_nm, tns_nm, eot_nm, lisp_nm, vgs, vds, tamb_k, rth_kw],
+            Self::TcadDiode1D { q_dope, nd_plus, temp, v_bias, .. } => vec![q_dope, nd_plus, temp, v_bias],
+        }
+    }
 }
 
 /// Parsed extended SPICE + Multi-PDK + PCB + TCAD verification deck.

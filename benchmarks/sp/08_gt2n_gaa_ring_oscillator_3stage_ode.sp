@@ -1,7 +1,7 @@
 * Suite B-08: 2nm Gate-All-Around (gt2n) 3-Stacked Nanosheet 3-Stage Ring Oscillator Envelope (ODE)
 .pdk gt2n
 .expected unsat
-.mode tran dt=2.0e-12 steps=5 method=be
+.mode tran dt=1.0e-12 steps=40 method=trap
 .default_vbound [-0.25, 1.0]
 
 * Continuous supply, nanosheet thickness etch delta, and inner-spacer thickness delta
@@ -35,5 +35,5 @@ Mn3 n1 n3 0   0   GT2N_NFET_GAA Nsheet=3 dTns={dtns_nm} dLisp={dlisp_nm}
 Cl3 n1 0 1.8e-15
 
 * Prove Miller / inner-spacer capacitive feedthrough never causes rail over/undershoot beyond 120 mV
-.unsafe v(n1) > vdd + 0.12 || v(n1) < -0.12 || v(n2) > vdd + 0.12 || v(n2) < -0.12
+.unsafe v(n1) > 0.83 || v(n1) < -0.08 || v(n2) > 0.83 || v(n2) < -0.08 || v(n3) > 0.83 || v(n3) < -0.08
 .end

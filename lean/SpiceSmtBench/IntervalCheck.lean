@@ -5,7 +5,7 @@ import SpiceSmtBench.PhysicsModels
 
 Implements:
 1. Exact arbitrary-precision rational endpoints `QRat` (`num : Int`, `den : Nat`, `0 < den`).
-2. Soundness of `QInterval` arithmetic (`add`, `sub`, `neg`, `scaleNonneg`) and scaling-and-squaring
+2. Soundness of `QInterval` arithmetic (`add`, `sub`, `neg`, `mul`, `divPos`, `exp`) and scaling-and-squaring
    transcendental `expLowerQ` (`(1 + x / 2^m)^(2^m) ≤ exp(x)`), proved from `TranscendentalField` laws
    with zero unproved obligations.
 3. A verified n-dimensional branch-and-bound `PavingTree` checker (`verifyPaving`) with its
@@ -198,6 +198,239 @@ structure QInterval where
 def memInterval {R : Type} (TF : TranscendentalField R) (iv : QInterval) (x : R) : Prop :=
   TF.le (QRat.eval TF iv.lo) x ∧ TF.le x (QRat.eval TF iv.hi)
 
+namespace QInterval
+
+def add (a b : QInterval) : QInterval := ⟨QRat.add a.lo b.lo, QRat.add a.hi b.hi⟩
+def sub (a b : QInterval) : QInterval := ⟨QRat.sub a.lo b.hi, QRat.sub a.hi b.lo⟩
+def neg (a : QInterval) : QInterval := ⟨QRat.neg a.hi, QRat.neg a.lo⟩
+
+theorem add_sound {R : Type} (TF : TranscendentalField R) (a b : QInterval) (x y : R)
+    (hx : memInterval TF a x) (hy : memInterval TF b y) :
+    memInterval TF (add a b) (TF.add x y) := by
+  constructor
+  · change TF.le (QRat.eval TF (QRat.add a.lo b.lo)) (TF.add x y)
+    rw [QRat.eval_add]
+    exact TF.add_le_add _ _ _ _ hx.1 hy.1
+  · change TF.le (TF.add x y) (QRat.eval TF (QRat.add a.hi b.hi))
+    rw [QRat.eval_add]
+    exact TF.add_le_add _ _ _ _ hx.2 hy.2
+
+theorem sub_sound {R : Type} (TF : TranscendentalField R) (a b : QInterval) (x y : R)
+    (hx : memInterval TF a x) (hy : memInterval TF b y) :
+    memInterval TF (sub a b) (TF.sub x y) := by
+  constructor
+  · change TF.le (QRat.eval TF (QRat.sub a.lo b.hi)) (TF.sub x y)
+    rw [QRat.eval_sub]
+    exact TF.sub_le_sub _ _ _ _ hx.1 hy.2
+  · change TF.le (TF.sub x y) (QRat.eval TF (QRat.sub a.hi b.lo))
+    rw [QRat.eval_sub]
+    exact TF.sub_le_sub _ _ _ _ hx.2 hy.1
+
+theorem neg_sound {R : Type} (TF : TranscendentalField R) (a : QInterval) (x : R)
+    (hx : memInterval TF a x) : memInterval TF (neg a) (TF.neg x) := by
+  constructor
+  · change TF.le (QRat.eval TF (QRat.neg a.hi)) (TF.neg x)
+    rw [QRat.eval_neg]
+    exact TF.neg_le_neg _ _ hx.2
+  · change TF.le (TF.neg x) (QRat.eval TF (QRat.neg a.lo))
+    rw [QRat.eval_neg]
+    exact TF.neg_le_neg _ _ hx.1
+
+end QInterval
+
+namespace QRat
+
+def min (a b : QRat) : QRat := if le a b then a else b
+def max (a b : QRat) : QRat := if le a b then b else a
+
+def invPos (a : QRat) (h : 0 < a.num) : QRat :=
+  ⟨(a.den : Int), a.num.toNat, by omega⟩
+
+theorem eval_invPos {R : Type} (TF : TranscendentalField R) (a : QRat) (h : 0 < a.num) :
+    eval TF (invPos a h) = TF.div TF.one (eval TF a) := by
+  unfold eval invPos
+  rw [TF.one_eq_ofRat]
+  have ha : (a.num.toNat : Int) = a.num := Int.toNat_of_nonneg (by omega)
+  have hd := TF.ofRat_div_pos 1 1 a.num.toNat a.den (by decide) (by omega) a.den_pos
+  simpa only [ha, Int.one_mul, Nat.one_mul] using hd.symm
+
+theorem min_le_left {R : Type} (TF : TranscendentalField R) (a b : QRat) :
+    TF.le (eval TF (min a b)) (eval TF a) := by
+  unfold min; split
+  · exact TF.le_refl _
+  · cases TF.le_total (eval TF a) (eval TF b) with
+    | inl h => exact False.elim (by rename_i hn; exact hn ((eval_le_iff TF a b).mp h))
+    | inr h => exact h
+
+theorem min_le_right {R : Type} (TF : TranscendentalField R) (a b : QRat) :
+    TF.le (eval TF (min a b)) (eval TF b) := by
+  unfold min; split
+  · exact (eval_le_iff TF a b).mpr (by assumption)
+  · exact TF.le_refl _
+
+theorem le_max_left {R : Type} (TF : TranscendentalField R) (a b : QRat) :
+    TF.le (eval TF a) (eval TF (max a b)) := by
+  unfold max; split
+  · exact (eval_le_iff TF a b).mpr (by assumption)
+  · exact TF.le_refl _
+
+theorem le_max_right {R : Type} (TF : TranscendentalField R) (a b : QRat) :
+    TF.le (eval TF b) (eval TF (max a b)) := by
+  unfold max; split
+  · exact TF.le_refl _
+  · cases TF.le_total (eval TF a) (eval TF b) with
+    | inl h => exact False.elim (by rename_i hn; exact hn ((eval_le_iff TF a b).mp h))
+    | inr h => exact h
+
+end QRat
+
+namespace QInterval
+
+def hull (a b : QInterval) : QInterval := ⟨QRat.min a.lo b.lo, QRat.max a.hi b.hi⟩
+
+theorem hull_left {R : Type} (TF : TranscendentalField R) (a b : QInterval) (x : R)
+    (h : memInterval TF a x) : memInterval TF (hull a b) x :=
+  ⟨TF.le_trans _ _ _ (QRat.min_le_left TF _ _) h.1,
+   TF.le_trans _ _ _ h.2 (QRat.le_max_left TF _ _)⟩
+
+theorem hull_right {R : Type} (TF : TranscendentalField R) (a b : QInterval) (x : R)
+    (h : memInterval TF b x) : memInterval TF (hull a b) x :=
+  ⟨TF.le_trans _ _ _ (QRat.min_le_right TF _ _) h.1,
+   TF.le_trans _ _ _ h.2 (QRat.le_max_right TF _ _)⟩
+
+def scale (c : QRat) (a : QInterval) : QInterval :=
+  if QRat.le QRat.zero c then ⟨QRat.mul c a.lo, QRat.mul c a.hi⟩
+  else ⟨QRat.mul c a.hi, QRat.mul c a.lo⟩
+
+theorem scale_sound {R : Type} (TF : TranscendentalField R) (c : QRat) (a : QInterval) (x : R)
+    (h : memInterval TF a x) : memInterval TF (scale c a) (TF.mul (QRat.eval TF c) x) := by
+  unfold scale; split
+  · rename_i hc
+    have hc' := (QRat.eval_le_iff TF QRat.zero c).mpr hc
+    rw [QRat.eval_zero] at hc'
+    constructor <;> simp only [QRat.eval_mul]
+    · exact TF.mul_le_mul_nonneg_left _ _ _ hc' h.1
+    · exact TF.mul_le_mul_nonneg_left _ _ _ hc' h.2
+  · rename_i hc
+    have hc' : TF.le (QRat.eval TF c) TF.zero := by
+      cases TF.le_total (QRat.eval TF c) TF.zero with
+      | inl h => exact h
+      | inr h =>
+        rw [← QRat.eval_zero TF] at h
+        exact False.elim (hc ((QRat.eval_le_iff TF _ _).mp h))
+    constructor <;> simp only [QRat.eval_mul]
+    · exact TF.mul_le_mul_nonpos_left _ _ _ hc' h.2
+    · exact TF.mul_le_mul_nonpos_left _ _ _ hc' h.1
+
+def mul (a b : QInterval) : QInterval := hull (scale a.lo b) (scale a.hi b)
+
+theorem mul_sound {R : Type} (TF : TranscendentalField R) (a b : QInterval) (x y : R)
+    (hx : memInterval TF a x) (hy : memInterval TF b y) : memInterval TF (mul a b) (TF.mul x y) := by
+  have hl := hull_left TF (scale a.lo b) (scale a.hi b) _ (scale_sound TF a.lo b y hy)
+  have hh := hull_right TF (scale a.lo b) (scale a.hi b) _ (scale_sound TF a.hi b y hy)
+  cases TF.le_total TF.zero y with
+  | inl h =>
+    have lo := TF.mul_le_mul_nonneg_left y _ _ h hx.1
+    have hi := TF.mul_le_mul_nonneg_left y _ _ h hx.2
+    rw [TF.mul_comm y x, TF.mul_comm y (QRat.eval TF a.lo)] at lo
+    rw [TF.mul_comm y x, TF.mul_comm y (QRat.eval TF a.hi)] at hi
+    exact ⟨TF.le_trans _ _ _ hl.1 lo, TF.le_trans _ _ _ hi hh.2⟩
+  | inr h =>
+    have lo := TF.mul_le_mul_nonpos_left y _ _ h hx.2
+    have hi := TF.mul_le_mul_nonpos_left y _ _ h hx.1
+    rw [TF.mul_comm y x, TF.mul_comm y (QRat.eval TF a.hi)] at lo
+    rw [TF.mul_comm y x, TF.mul_comm y (QRat.eval TF a.lo)] at hi
+    exact ⟨TF.le_trans _ _ _ hh.1 lo, TF.le_trans _ _ _ hi hl.2⟩
+
+def invPos (a : QInterval) : Option QInterval :=
+  if hl : 0 < a.lo.num then
+    if hh : 0 < a.hi.num then some ⟨QRat.invPos a.hi hh, QRat.invPos a.lo hl⟩ else none
+  else none
+
+private theorem qpos {R : Type} (TF : TranscendentalField R) (q : QRat) (h : 0 < q.num) :
+    TF.lt TF.zero (QRat.eval TF q) := by
+  rw [← QRat.eval_zero TF, QRat.eval_lt_iff]
+  change (0 : Int) * (q.den : Int) < q.num * 1
+  simpa only [Int.zero_mul, Int.mul_one] using h
+
+private theorem one_nonneg {R : Type} (TF : TranscendentalField R) : TF.le TF.zero TF.one := by
+  rw [TF.zero_eq_ofRat, TF.one_eq_ofRat]
+  exact (TF.ofRat_le_iff 0 1 1 1 (by decide) (by decide)).mpr (by decide)
+
+private theorem pos_of_pos_le {R : Type} (TF : TranscendentalField R) (a b : R)
+    (ha : TF.lt TF.zero a) (hab : TF.le a b) : TF.lt TF.zero b := by
+  obtain ⟨h, hn⟩ := (TF.lt_iff_le_not_le _ _).mp ha
+  exact (TF.lt_iff_le_not_le _ _).mpr ⟨TF.le_trans _ _ _ h hab, fun hb => hn (TF.le_trans _ _ _ hab hb)⟩
+
+theorem invPos_sound {R : Type} (TF : TranscendentalField R) (a r : QInterval) (x : R)
+    (he : invPos a = some r) (hx : memInterval TF a x) :
+    memInterval TF r (TF.div TF.one x) := by
+  unfold invPos at he
+  split at he <;> try contradiction
+  split at he <;> try contradiction
+  rename_i hl hh
+  cases he
+  have hp := pos_of_pos_le TF _ x (qpos TF a.lo hl) hx.1
+  constructor <;> simp only [QRat.eval_invPos]
+  · exact TF.div_ge_of_num_ge_den_le _ _ _ _ (one_nonneg TF) (TF.le_refl _) hp hx.2
+  · exact TF.div_ge_of_num_ge_den_le _ _ _ _ (one_nonneg TF) (TF.le_refl _) (qpos TF a.lo hl) hx.1
+
+/-- Division enclosure uses numerator sign and positive denominator monotonicity. -/
+def divPos (a b : QInterval) : Option QInterval := do
+  let inv ← invPos b
+  return mul a inv
+
+theorem divPos_sound {R : Type} (TF : TranscendentalField R) (a b r : QInterval) (x y : R)
+    (he : divPos a b = some r) (hx : memInterval TF a x) (hy : memInterval TF b y) :
+    memInterval TF r (TF.div x y) := by
+  cases hi : invPos b with
+  | none => simp [divPos, hi] at he
+  | some iv =>
+    have hb : 0 < b.lo.num := by
+      unfold invPos at hi
+      split at hi
+      · assumption
+      · contradiction
+    have hp := pos_of_pos_le TF _ y (qpos TF b.lo hb) hy.1
+    simp [divPos, hi] at he
+    subst r
+    rw [TF.div_eq_mul_inv_pos x y hp]
+    exact mul_sound TF a iv x _ hx (invPos_sound TF b iv y hi hy)
+
+-- `exp(-x)` gives an upper bound by reciprocating a positive lower bound.
+def exp (a : QInterval) (m : Nat := 8) : Option QInterval :=
+  let baseLo := QRat.add QRat.one (QRat.halfPow m a.lo)
+  let baseHi := QRat.add QRat.one (QRat.halfPow m (QRat.neg a.hi))
+  if QRat.le QRat.zero baseLo then
+    if QRat.le QRat.zero baseHi then
+      let upperDen := QRat.iterSq m baseHi
+      if h : 0 < upperDen.num then
+        some ⟨QRat.iterSq m baseLo, QRat.invPos upperDen h⟩
+      else none
+    else none
+  else none
+
+theorem exp_sound {R : Type} (TF : TranscendentalField R) (a r : QInterval) (x : R) (m : Nat)
+    (he : exp a m = some r) (hx : memInterval TF a x) : memInterval TF r (TF.exp x) := by
+  unfold exp at he
+  dsimp only at he
+  split at he <;> try contradiction
+  split at he <;> try contradiction
+  split at he <;> try contradiction
+  rename_i hlo hhi hp
+  cases he
+  constructor
+  · exact exp_ge_qrat_iterSq TF m a.lo x hlo hx.1
+  · have hn : TF.le (QRat.eval TF (QRat.neg a.hi)) (TF.neg x) := by
+      rw [QRat.eval_neg]; exact TF.neg_le_neg _ _ hx.2
+    have hd := exp_ge_qrat_iterSq TF m (QRat.neg a.hi) (TF.neg x) hhi hn
+    have h := TF.div_ge_of_num_ge_den_le _ _ _ _ (one_nonneg TF) (TF.le_refl TF.one)
+      (qpos TF _ hp) hd
+    rw [← TF.exp_neg, TF.neg_neg, ← QRat.eval_invPos TF _ hp] at h
+    exact h
+
+end QInterval
+
 /-- Pointwise box membership of an assignment `env : Nat → R` inside `box : List QInterval`. -/
 def memBox {R : Type} (TF : TranscendentalField R) : List QInterval → (Nat → R) → Prop
   | [], _ => True
@@ -283,4 +516,356 @@ theorem paving_unsat_sound {R : Type} (TF : TranscendentalField R)
       | inl hl => exact paving_unsat_sound TF Active checkLeaf hleaf_sound left lBox env hand.1 hl
       | inr hr => exact paving_unsat_sound TF Active checkLeaf hleaf_sound right rBox env hand.2 hr
 
+/-- Arithmetic syntax shared by concrete certificates and their semantics. -/
+inductive PExpr where
+  | const : QRat → PExpr
+  | var : Nat → PExpr
+  | neg : PExpr → PExpr
+  | add : PExpr → PExpr → PExpr
+  | sub : PExpr → PExpr → PExpr
+  | mul : PExpr → PExpr → PExpr
+  | div : PExpr → PExpr → PExpr
+  | exp : PExpr → PExpr
+  deriving Repr
+
+def PExpr.eval {R : Type} (TF : TranscendentalField R) (env : Nat → R) : PExpr → R
+  | .const q => QRat.eval TF q
+  | .var i => env i
+  | .neg a => TF.neg (a.eval TF env)
+  | .add a b => TF.add (a.eval TF env) (b.eval TF env)
+  | .sub a b => TF.sub (a.eval TF env) (b.eval TF env)
+  | .mul a b => TF.mul (a.eval TF env) (b.eval TF env)
+  | .div a b => TF.div (a.eval TF env) (b.eval TF env)
+  | .exp a => TF.exp (a.eval TF env)
+
+def evalPExpr (box : List QInterval) : PExpr → Option QInterval
+  | .const q => some ⟨q, q⟩
+  | .var i => box[i]?
+  | .neg a => QInterval.neg <$> evalPExpr box a
+  | .add a b => do return QInterval.add (← evalPExpr box a) (← evalPExpr box b)
+  | .sub a b => do return QInterval.sub (← evalPExpr box a) (← evalPExpr box b)
+  | .mul a b => do return QInterval.mul (← evalPExpr box a) (← evalPExpr box b)
+  | .div a b => do QInterval.divPos (← evalPExpr box a) (← evalPExpr box b)
+  | .exp a => do QInterval.exp (← evalPExpr box a)
+
+theorem memBox_lookup {R : Type} (TF : TranscendentalField R) :
+    ∀ (box : List QInterval) (env : Nat → R) (i : Nat) (iv : QInterval),
+      memBox TF box env → box[i]? = some iv → memInterval TF iv (env i)
+  | [], _, _, _, _, h => by simp at h
+  | a :: rest, env, 0, iv, h, hi => by
+    simp only [List.getElem?_cons_zero, Option.some.injEq] at hi
+    subst iv; exact h.1
+  | a :: rest, env, i+1, iv, h, hi =>
+    memBox_lookup TF rest (fun j => env (j+1)) i iv h.2 hi
+
+theorem evalPExpr_sound {R : Type} (TF : TranscendentalField R) (box : List QInterval)
+    (env : Nat → R) (hm : memBox TF box env) (e : PExpr) (iv : QInterval)
+    (he : evalPExpr box e = some iv) : memInterval TF iv (e.eval TF env) := by
+  induction e generalizing iv with
+  | const q => cases he; exact ⟨TF.le_refl _, TF.le_refl _⟩
+  | var i => exact memBox_lookup TF box env i iv hm he
+  | neg a ih =>
+    cases ha : evalPExpr box a with
+    | none => simp [evalPExpr, ha] at he
+    | some v =>
+      simp [evalPExpr, ha] at he
+      subst iv; exact QInterval.neg_sound TF v _ (ih v ha)
+  | exp a ih =>
+    cases ha : evalPExpr box a with
+    | none => simp [evalPExpr, ha] at he
+    | some v =>
+      simp [evalPExpr, ha] at he
+      exact QInterval.exp_sound TF v iv _ 8 he (ih v ha)
+  | add a b ia ib | sub a b ia ib | mul a b ia ib | div a b ia ib =>
+    cases ha : evalPExpr box a with
+    | none => simp [evalPExpr, ha] at he
+    | some va =>
+      cases hb : evalPExpr box b with
+      | none => simp [evalPExpr, ha, hb] at he
+      | some vb =>
+        simp only [evalPExpr, ha, hb, Option.pure_def] at he
+        first
+        | exact QInterval.divPos_sound TF va vb iv _ _ he (ia va ha) (ib vb hb)
+        | cases he
+          first
+          | exact QInterval.add_sound TF va vb _ _ (ia va ha) (ib vb hb)
+          | exact QInterval.sub_sound TF va vb _ _ (ia va ha) (ib vb hb)
+          | exact QInterval.mul_sound TF va vb _ _ (ia va ha) (ib vb hb)
+
+inductive PCmp where
+  | eqZero | gtZero | geZero
+  deriving Repr, DecidableEq
+
+def PCmp.holds {R : Type} (TF : TranscendentalField R) (op : PCmp) (x : R) : Prop :=
+  match op with
+  | .eqZero => x = TF.zero
+  | .gtZero => TF.lt TF.zero x
+  | .geZero => TF.le TF.zero x
+
+def refuteConstraint (op : PCmp) (iv : QInterval) : Bool :=
+  match op with
+  | .eqZero => decide (QRat.lt iv.hi QRat.zero) || decide (QRat.lt QRat.zero iv.lo)
+  | .gtZero => decide (QRat.le iv.hi QRat.zero)
+  | .geZero => decide (QRat.lt iv.hi QRat.zero)
+
+theorem refuteConstraint_sound {R : Type} (TF : TranscendentalField R) (op : PCmp)
+    (iv : QInterval) (x : R) (hm : memInterval TF iv x)
+    (h : refuteConstraint op iv = true) : ¬ op.holds TF x := by
+  have lt0 (h : QRat.lt iv.hi QRat.zero) : ¬ TF.le TF.zero x := by
+    have hh := (QRat.eval_lt_iff TF iv.hi QRat.zero).mpr h
+    rw [QRat.eval_zero] at hh
+    exact fun hx => ((TF.lt_iff_le_not_le _ _).mp hh).2 (TF.le_trans _ _ _ hx hm.2)
+  have gt0 (h : QRat.lt QRat.zero iv.lo) : ¬ TF.le x TF.zero := by
+    have hh := (QRat.eval_lt_iff TF QRat.zero iv.lo).mpr h
+    rw [QRat.eval_zero] at hh
+    exact fun hx => ((TF.lt_iff_le_not_le _ _).mp hh).2 (TF.le_trans _ _ _ hm.1 hx)
+  cases op with
+  | eqZero =>
+    simp only [refuteConstraint, Bool.or_eq_true, decide_eq_true_eq] at h
+    intro hx; change x = TF.zero at hx
+    cases h with
+    | inl h => exact lt0 h (hx ▸ TF.le_refl _)
+    | inr h => exact gt0 h (hx ▸ TF.le_refl _)
+  | geZero => exact lt0 (of_decide_eq_true h)
+  | gtZero =>
+    have hh := (QRat.eval_le_iff TF iv.hi QRat.zero).mpr (of_decide_eq_true h)
+    rw [QRat.eval_zero] at hh
+    intro hx
+    exact ((TF.lt_iff_le_not_le _ _).mp hx).2 (TF.le_trans _ _ _ hm.2 hh)
+
+abbrev PConstraint := PCmp × PExpr
+
+def holdsConstraints {R : Type} (TF : TranscendentalField R) (cs : List PConstraint)
+    (env : Nat → R) : Prop := ∀ c ∈ cs, c.1.holds TF (c.2.eval TF env)
+
+def checkConcreteLeaf (cs : List PConstraint) (reason : Nat) (box : List QInterval) : Bool :=
+  match cs[reason]? with
+  | none => false
+  | some (op, e) => match evalPExpr box e with
+    | none => false
+    | some iv => refuteConstraint op iv
+
+theorem checkConcreteLeaf_sound {R : Type} (TF : TranscendentalField R) (cs : List PConstraint)
+    (reason : Nat) (box : List QInterval) (env : Nat → R)
+    (hc : checkConcreteLeaf cs reason box = true) (hm : memBox TF box env) :
+    ¬ holdsConstraints TF cs env := by
+  unfold checkConcreteLeaf at hc
+  cases hg : cs[reason]? with
+  | none => simp [hg] at hc
+  | some c =>
+    rcases c with ⟨op, e⟩
+    cases he : evalPExpr box e with
+    | none => simp [hg, he] at hc
+    | some iv =>
+      simp only [hg, he] at hc
+      intro hs
+      have hmem : (op, e) ∈ cs := List.mem_of_getElem? hg
+      exact refuteConstraint_sound TF op iv _ (evalPExpr_sound TF box env hm e iv he) hc (hs _ hmem)
+
 end SpiceSmtBench.IntervalCheck
+
+namespace SpiceSmtBench
+namespace TranscendentalField
+
+theorem mul_right_cancel_pos {R : Type} (TF : TranscendentalField R) (a b c : R)
+    (hc : TF.lt TF.zero c) (h : TF.mul a c = TF.mul b c) : a = b := by
+  have hi : TF.mul c (TF.div TF.one c) = TF.one := by
+    rw [TF.mul_comm]; exact TF.mul_div_cancel_pos TF.one c hc
+  have hh := congrArg (fun z => TF.mul z (TF.div TF.one c)) h
+  simpa only [TF.mul_assoc, hi, TF.mul_one] using hh
+
+theorem square_le_reflect {R : Type} (TF : TranscendentalField R) (a b : R)
+    (ha : TF.le TF.zero a) (hb : TF.le TF.zero b)
+    (h : TF.le (TF.mul a a) (TF.mul b b)) : TF.le a b := by
+  cases TF.le_total a b with
+  | inl h => exact h
+  | inr hba =>
+    have he := TF.le_antisymm _ _ h (TF.sq_mono_nonneg b a hb hba)
+    by_cases hb0 : TF.le b TF.zero
+    · have eb : b = TF.zero := TF.le_antisymm _ _ hb0 hb
+      rw [eb, TF.mul_zero] at he
+      by_cases ha0 : TF.le a TF.zero
+      · exact eb ▸ ha0
+      · have hap := (TF.lt_iff_le_not_le _ _).mpr ⟨ha, ha0⟩
+        have hz : TF.mul TF.zero a = TF.zero := by rw [TF.mul_comm, TF.mul_zero]
+        have ea := TF.mul_right_cancel_pos a TF.zero a hap (he.trans hz.symm)
+        exact ea ▸ hb
+    · have hbp := (TF.lt_iff_le_not_le _ _).mpr ⟨hb, hb0⟩
+      have hap := (TF.lt_iff_le_not_le _ _).mpr ⟨ha, fun hn => hb0 (TF.le_trans _ _ _ hba hn)⟩
+      have eq := TF.positive_sqrt_unique a b hap hbp he
+      exact eq ▸ TF.le_refl b
+
+end TranscendentalField
+
+namespace IntervalCheck
+
+/-- Checked forward definitions bound initially unbounded algebraic auxiliaries. -/
+inductive DefKind where
+  | direct | logarithm | squareRoot
+  deriving Repr
+
+structure PDefinition where
+  kind : DefKind
+  rhs : PExpr
+  deriving Repr
+
+def PDefinition.holds {R : Type} (TF : TranscendentalField R) (env : Nat → R)
+    (n : Nat) (d : PDefinition) : Prop :=
+  match d.kind with
+  | .direct => env n = d.rhs.eval TF env
+  | .logarithm => TF.exp (env n) = d.rhs.eval TF env
+  | .squareRoot => TF.le TF.zero (env n) ∧ TF.mul (env n) (env n) = d.rhs.eval TF env
+
+def encloses (outer inner : QInterval) : Bool :=
+  decide (QRat.le outer.lo inner.lo) && decide (QRat.le inner.hi outer.hi)
+
+theorem encloses_sound {R : Type} (TF : TranscendentalField R) (a b : QInterval) (x : R)
+    (h : encloses a b = true) (hm : memInterval TF b x) : memInterval TF a x := by
+  simp only [encloses, Bool.and_eq_true, decide_eq_true_eq] at h
+  exact ⟨TF.le_trans _ _ _ ((QRat.eval_le_iff TF _ _).mpr h.1) hm.1,
+    TF.le_trans _ _ _ hm.2 ((QRat.eval_le_iff TF _ _).mpr h.2)⟩
+
+def checkDefinition (box : List QInterval) (d : PDefinition) (iv : QInterval) : Bool :=
+  match evalPExpr box d.rhs with
+  | none => false
+  | some rhs => match d.kind with
+    | .direct => encloses iv rhs
+    | .logarithm => match QInterval.exp ⟨iv.lo, iv.lo⟩, QInterval.exp ⟨iv.hi, iv.hi⟩ with
+      | some lo, some hi => decide (QRat.le lo.hi rhs.lo) && decide (QRat.le rhs.hi hi.lo)
+      | _, _ => false
+    | .squareRoot => decide (QRat.le QRat.zero iv.lo) && decide (QRat.le QRat.zero iv.hi) &&
+        decide (QRat.le (QRat.mul iv.lo iv.lo) rhs.lo) && decide (QRat.le rhs.hi (QRat.mul iv.hi iv.hi))
+
+theorem checkDefinition_sound {R : Type} (TF : TranscendentalField R) (box : List QInterval)
+    (d : PDefinition) (iv : QInterval) (env : Nat → R)
+    (hm : memBox TF box env) (hd : d.holds TF env box.length)
+    (hc : checkDefinition box d iv = true) : memInterval TF iv (env box.length) := by
+  unfold checkDefinition at hc
+  cases he : evalPExpr box d.rhs with
+  | none => simp [he] at hc
+  | some rhs =>
+    have hr := evalPExpr_sound TF box env hm d.rhs rhs he
+    simp only [he] at hc
+    cases hk : d.kind with
+    | direct =>
+      simp only [hk] at hc
+      simp only [PDefinition.holds, hk] at hd
+      rw [hd]; exact encloses_sound TF iv rhs _ hc hr
+    | logarithm =>
+      simp only [hk] at hc
+      simp only [PDefinition.holds, hk] at hd
+      cases hl : QInterval.exp ⟨iv.lo, iv.lo⟩ with
+      | none => simp [hl] at hc
+      | some lo =>
+        cases hh : QInterval.exp ⟨iv.hi, iv.hi⟩ with
+        | none => simp [hl, hh] at hc
+        | some hi =>
+          simp only [hl, hh, Bool.and_eq_true, decide_eq_true_eq] at hc
+          have hlo := QInterval.exp_sound TF ⟨iv.lo,iv.lo⟩ lo (QRat.eval TF iv.lo) 8 hl ⟨TF.le_refl _,TF.le_refl _⟩
+          have hhi := QInterval.exp_sound TF ⟨iv.hi,iv.hi⟩ hi (QRat.eval TF iv.hi) 8 hh ⟨TF.le_refl _,TF.le_refl _⟩
+          have reflect : ∀ a b, TF.le (TF.exp a) (TF.exp b) → TF.le a b := by
+            intro a b h
+            cases TF.le_total a b with
+            | inl h => exact h
+            | inr hba =>
+              have eq := TF.exp_injective a b (TF.le_antisymm _ _ h (TF.exp_mono _ _ hba))
+              exact eq ▸ TF.le_refl b
+          constructor
+          · apply reflect; rw [hd]
+            exact TF.le_trans _ _ _ hlo.2 (TF.le_trans _ _ _ ((QRat.eval_le_iff TF _ _).mpr hc.1) hr.1)
+          · apply reflect; rw [hd]
+            exact TF.le_trans _ _ _ hr.2 (TF.le_trans _ _ _ ((QRat.eval_le_iff TF _ _).mpr hc.2) hhi.1)
+    | squareRoot =>
+      simp only [hk, Bool.and_eq_true, decide_eq_true_eq] at hc
+      simp only [PDefinition.holds, hk] at hd
+      have lo := (QRat.eval_le_iff TF _ _).mpr hc.1.1.1
+      have hi := (QRat.eval_le_iff TF _ _).mpr hc.1.1.2
+      rw [QRat.eval_zero] at lo hi
+      constructor
+      · apply TF.square_le_reflect _ _ lo hd.1
+        rw [hd.2, ← QRat.eval_mul]
+        exact TF.le_trans _ _ _ ((QRat.eval_le_iff TF _ _).mpr hc.1.2) hr.1
+      · apply TF.square_le_reflect _ _ hd.1 hi
+        rw [hd.2, ← QRat.eval_mul]
+        exact TF.le_trans _ _ _ hr.2 ((QRat.eval_le_iff TF _ _).mpr hc.2)
+
+theorem memBox_append_one {R : Type} (TF : TranscendentalField R) :
+    ∀ (box : List QInterval) (iv : QInterval) (env : Nat → R),
+      memBox TF box env → memInterval TF iv (env box.length) → memBox TF (box ++ [iv]) env
+  | [], _iv, _env, _, hi => ⟨hi, trivial⟩
+  | _a::rest, iv, env, hm, hi =>
+    ⟨hm.1, memBox_append_one TF rest iv (fun k => env (k+1)) hm.2 hi⟩
+
+def holdsDefinitions {R : Type} (TF : TranscendentalField R) (env : Nat → R) : Nat → List PDefinition → Prop
+  | _, [] => True
+  | n, d::ds => d.holds TF env n ∧ holdsDefinitions TF env (n+1) ds
+
+def forwardBox : List QInterval → List PDefinition → List QInterval → Option (List QInterval)
+  | box, [], [] => some box
+  | box, d::ds, iv::ivs => if checkDefinition box d iv then forwardBox (box ++ [iv]) ds ivs else none
+  | _, _, _ => none
+
+theorem forwardBox_sound {R : Type} (TF : TranscendentalField R) (env : Nat → R) :
+    ∀ (box : List QInterval) (ds : List PDefinition) (ivs result : List QInterval),
+      memBox TF box env → holdsDefinitions TF env box.length ds →
+      forwardBox box ds ivs = some result → memBox TF result env
+  | box, [], [], result, hm, _, he => by cases he; exact hm
+  | _, [], _::_, _, _, _, he => by contradiction
+  | _, _::_, [], _, _, _, he => by contradiction
+  | box, d::ds, iv::ivs, result, hm, hd, he => by
+    unfold forwardBox at he
+    split at he
+    · rename_i hc
+      have hm' := memBox_append_one TF box iv env hm (checkDefinition_sound TF box d iv env hm hd.1 hc)
+      apply forwardBox_sound TF env (box ++ [iv]) ds ivs result hm' _ he
+      simpa only [List.length_append, List.length_singleton] using hd.2
+    · contradiction
+
+def checkRanges (box : List QInterval) : List (Nat × QInterval) → Bool
+  | [] => true
+  | (i, iv)::rest => (match box[i]? with | none => false | some got => encloses iv got) && checkRanges box rest
+
+def holdsRanges {R : Type} (TF : TranscendentalField R) (env : Nat → R) : List (Nat × QInterval) → Prop
+  | [] => True
+  | (i, iv)::rest => memInterval TF iv (env i) ∧ holdsRanges TF env rest
+
+theorem checkRanges_sound {R : Type} (TF : TranscendentalField R) (env : Nat → R)
+    (box : List QInterval) (hm : memBox TF box env) :
+    ∀ ranges, checkRanges box ranges = true → holdsRanges TF env ranges
+  | [], _ => trivial
+  | (i, iv)::rest, h => by
+    simp only [checkRanges, Bool.and_eq_true] at h
+    cases hg : box[i]? with
+    | none => simp [hg] at h
+    | some got =>
+      simp only [hg] at h
+      exact ⟨encloses_sound TF iv got _ h.1 (memBox_lookup TF box env i got hm hg), checkRanges_sound TF env box hm rest h.2⟩
+
+def checkForwardLeaf (n : Nat) (ds : List PDefinition) (ranges : List (Nat × QInterval))
+    (certs : List (List QInterval)) (reason : Nat) (box : List QInterval) : Bool :=
+  decide (box.length = n) && match certs[reason]? with
+    | none => false
+    | some ivs => match forwardBox box ds ivs with
+      | none => false
+      | some result => checkRanges result ranges
+
+theorem checkForwardLeaf_sound {R : Type} (TF : TranscendentalField R) (n : Nat)
+    (ds : List PDefinition) (ranges : List (Nat × QInterval)) (certs : List (List QInterval))
+    (reason : Nat) (box : List QInterval) (env : Nat → R)
+    (hc : checkForwardLeaf n ds ranges certs reason box = true) (hm : memBox TF box env) :
+    ¬ (holdsDefinitions TF env n ds ∧ ¬ holdsRanges TF env ranges) := by
+  simp only [checkForwardLeaf, Bool.and_eq_true, decide_eq_true_eq] at hc
+  intro ⟨hd, hn⟩
+  cases hg : certs[reason]? with
+  | none => simp [hg] at hc
+  | some ivs =>
+    cases hf : forwardBox box ds ivs with
+    | none => simp [hg, hf] at hc
+    | some result =>
+      simp only [hg, hf] at hc
+      rw [← hc.1] at hd
+      exact hn (checkRanges_sound TF env result (forwardBox_sound TF env box ds ivs result hm hd hf) ranges hc.2)
+
+end IntervalCheck
+
+end SpiceSmtBench

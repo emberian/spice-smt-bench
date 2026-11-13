@@ -18,6 +18,6 @@
 * Off-state leakage bias: V_GS = 0.0 V, V_DS = 0.70 V
 .tcad_finfet_2d fin7 nx=5 ny=3 lg_nm={21.0 + dlg_nm} tfin_nm={6.5 + dtfin_nm} eot_nm=1.0 vgs=0.0 vds=0.70 phim_shift={dphim} temp_k={temp_k} nbody_cm3=1.0e16
 
-* Prove off-state subthreshold DIBL leakage never exceeds 0.15 uA/um across the entire 4D FinFET litho box
-.unsafe id_leak_ua_fin7 > 0.15
+* Prove off-state subthreshold DIBL leakage never exceeds 10 pA/um (0.000010 uA/um) across the entire 4D FinFET litho box
+.unsafe id_leak_ua_fin7 > 0.000010
 .end

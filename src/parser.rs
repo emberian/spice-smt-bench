@@ -15,12 +15,14 @@ pub fn parse_spice_number(raw: &str) -> Result<f64, String> {
         return Err("empty numeric literal".to_string());
     }
     if let Ok(v) = s.parse::<f64>() {
-        return Ok(v);
+        return if v.is_finite() { Ok(v) } else { Err(format!("non-finite numeric literal `{raw}`")) };
     }
     let lower = s.to_ascii_lowercase();
     let suffixes: &[(&str, f64)] = &[
         ("meg", 1e6),
         ("mil", 25.4e-6),
+        ("nm", 1e-9),
+        ("um", 1e-6),
         ("t", 1e12),
         ("g", 1e9),
         ("k", 1e3),
@@ -33,7 +35,8 @@ pub fn parse_spice_number(raw: &str) -> Result<f64, String> {
     for (suf, scale) in suffixes {
         if let Some(prefix) = lower.strip_suffix(suf) {
             if let Ok(base) = prefix.trim().parse::<f64>() {
-                return Ok(base * scale);
+                let value = base * scale;
+                return if value.is_finite() { Ok(value) } else { Err(format!("non-finite numeric literal `{raw}`")) };
             }
         }
     }
@@ -499,13 +502,25 @@ fn parse_kv_tokens(tokens: &[String]) -> Result<BTreeMap<String, Expr>, String> 
                 continue;
             }
             if let Some((k, v)) = piece.split_once('=') {
-                map.insert(k.trim().to_ascii_lowercase(), parse_expr_str(v.trim())?);
+                let key = k.trim().to_ascii_lowercase();
+                if map.insert(key.clone(), parse_expr_str(v.trim())?).is_some() {
+                    return Err(format!("duplicate parameter `{key}`"));
+                }
             } else {
                 return Err(format!("expected `key=value`, got `{piece}`"));
             }
         }
     }
     Ok(map)
+}
+
+fn validate_keys(kvs: &BTreeMap<String, Expr>, allowed: &[&str]) -> Result<(), String> {
+    for key in kvs.keys() {
+        if !allowed.contains(&key.as_str()) {
+            return Err(format!("unknown parameter `{key}`"));
+        }
+    }
+    Ok(())
 }
 
 fn get_req_expr(
@@ -527,14 +542,19 @@ fn get_req_f64(kvs: &BTreeMap<String, Expr>, key: &str, ctx: &str) -> Result<f64
     }
 }
 
+fn section_count(kvs: &BTreeMap<String, Expr>) -> Result<usize, String> {
+    let n = kvs.get("n_seg").cloned().unwrap_or(Expr::num(3.0));
+    match n { Expr::Num(v) if (1.0..=32.0).contains(&v) && v.fract() == 0.0 => Ok(v as usize), _ => Err("n_seg must be an integer in 1..32".into()) }
+}
+
 fn parse_waveform(tokens: &[String]) -> Result<Waveform, String> {
     if tokens.is_empty() {
         return Err("missing source waveform".to_string());
     }
     let head_upper = tokens[0].to_ascii_uppercase();
     if head_upper == "DC" {
-        if tokens.len() < 2 {
-            return Err("expected value after `DC`".to_string());
+        if tokens.len() != 2 {
+            return Err("expected exactly one value after `DC`".to_string());
         }
         return Ok(Waveform::Dc(parse_expr_str(&tokens[1])?));
     }
@@ -564,6 +584,9 @@ fn parse_waveform(tokens: &[String]) -> Result<Waveform, String> {
             t0: get_req_expr(&kvs, "t0", "STEP waveform")?,
             tau: get_req_expr(&kvs, "tau", "STEP waveform")?,
         });
+    }
+    if tokens.len() != 1 {
+        return Err("unexpected trailing source tokens".to_string());
     }
     Ok(Waveform::Dc(parse_expr_str(&tokens[0])?))
 }
@@ -711,12 +734,25 @@ pub fn parse_deck(source: &str) -> Result<Deck, String> {
                         "tran" => {
                             let kvs = parse_kv_tokens(&toks[2..]).map_err(err_ctx)?;
                             let dt = get_req_f64(&kvs, "dt", ".mode tran").map_err(err_ctx)?;
-                            let steps = get_req_f64(&kvs, "steps", ".mode tran").map_err(err_ctx)?
-                                as usize;
-                            let method = if line.to_ascii_lowercase().contains("method=trap") {
-                                TranMethod::Trapezoidal
-                            } else {
-                                TranMethod::BackwardEuler
+                            let count = get_req_f64(&kvs, "steps", ".mode tran").map_err(err_ctx)?;
+                            if dt <= 0.0 || !dt.is_finite() || !count.is_finite()
+                                || count < 1.0 || count.fract() != 0.0 || count > 100_000.0 {
+                                return Err(err_ctx("require dt > 0 and integer steps in [1, 100000]".to_string()));
+                            }
+                            for key in kvs.keys() {
+                                if !["dt", "steps", "method"].contains(&key.as_str()) {
+                                    return Err(err_ctx(format!("unknown transient parameter `{key}`")));
+                                }
+                            }
+                            let steps = count as usize;
+                            let method = match kvs.get("method") {
+                                None => TranMethod::BackwardEuler,
+                                Some(Expr::Var(name)) => match name.to_ascii_lowercase().as_str() {
+                                    "be" | "backward_euler" => TranMethod::BackwardEuler,
+                                    "trap" | "trapezoidal" => TranMethod::Trapezoidal,
+                                    _ => return Err(err_ctx(format!("unknown transient method `{name}`"))),
+                                },
+                                _ => return Err(err_ctx("invalid transient method".to_string())),
                             };
                             deck.mode = AnalysisMode::Tran { dt, steps, method };
                         }
@@ -778,7 +814,8 @@ pub fn parse_deck(source: &str) -> Result<Deck, String> {
                         "PNP" => ModelKind::Pnp,
                         "SIGE_HBT" | "HBT_NPN" => ModelKind::SiGeHbt,
                         "GAN_HEMT" | "ASM_HEMT" => ModelKind::GanHemt,
-                        "MLCC" => ModelKind::Mlcc,
+                        "MLCC" | "C_MLCC" => ModelKind::Mlcc,
+                        "C_GD" | "GAN_CGD" => ModelKind::DepletionCap,
                         other => return Err(err_ctx(format!("unknown model kind `{other}`"))),
                     };
                     let params = parse_kv_tokens(&toks[3..]).map_err(err_ctx)?;
@@ -794,6 +831,7 @@ pub fn parse_deck(source: &str) -> Result<Deck, String> {
                     }
                     let kvs = parse_kv_tokens(&toks[5..]).map_err(err_ctx)?;
                     deck.elements.push(Element::PcbMicrostrip {
+                        n_seg: section_count(&kvs).map_err(err_ctx)?,
                         name: toks[1].clone(),
                         n_in: toks[2].clone(),
                         n_out: toks[3].clone(),
@@ -820,6 +858,8 @@ pub fn parse_deck(source: &str) -> Result<Deck, String> {
                     }
                     let kvs = parse_kv_tokens(&toks[8..]).map_err(err_ctx)?;
                     deck.elements.push(Element::PcbCoupledDiffpair {
+                        n_seg: section_count(&kvs).map_err(err_ctx)?,
+                        sigma_cu: kvs.get("sigma_cu").cloned().unwrap_or(Expr::num(5.8e7)),
                         name: toks[1].clone(),
                         in_p: toks[2].clone(),
                         in_n: toks[3].clone(),
@@ -954,7 +994,7 @@ pub fn parse_deck(source: &str) -> Result<Deck, String> {
         }
 
         let first_char = head.chars().next().unwrap().to_ascii_uppercase();
-        if head_lower.starts_with("c_mlcc") {
+        if head_lower.starts_with("c_mlcc") || head_lower.starts_with("c_gd") {
             if toks.len() < 4 {
                 return Err(err_ctx(
                     "expected `C_MLCC<name> <n+> <n-> [model] params...`".to_string(),
@@ -966,11 +1006,10 @@ pub fn parse_deck(source: &str) -> Result<Deck, String> {
                 (Some(toks[3].clone()), &toks[4..])
             };
             let kvs = parse_kv_tokens(kv_slice).map_err(err_ctx)?;
-            let mod_params = model.as_ref().and_then(|m| deck.models.get(m));
+            validate_keys(&kvs, &["c0", "cmin", "vsat", "vbi", "esr", "esl"]).map_err(err_ctx)?;
             let lookup = |key: &str, default: f64| -> Expr {
                 kvs.get(key)
                     .cloned()
-                    .or_else(|| mod_params.and_then(|mp| mp.params.get(key).cloned()))
                     .unwrap_or_else(|| Expr::num(default))
             };
             deck.elements.push(Element::MlccCap {
@@ -978,6 +1017,7 @@ pub fn parse_deck(source: &str) -> Result<Deck, String> {
                 n_pos: toks[1].clone(),
                 n_neg: toks[2].clone(),
                 model,
+                overrides: kvs.clone(),
                 c0: lookup("c0", 1e-6),
                 c_min: lookup("cmin", 0.0),
                 vsat: lookup("vsat", 1.0),
@@ -1017,6 +1057,7 @@ pub fn parse_deck(source: &str) -> Result<Deck, String> {
                     ));
                 }
                 let kvs = parse_kv_tokens(&toks[4..]).map_err(err_ctx)?;
+                validate_keys(&kvs, &["rser"]).map_err(err_ctx)?;
                 deck.elements.push(Element::Inductor {
                     name: head.to_string(),
                     n_pos: toks[1].clone(),
@@ -1069,6 +1110,7 @@ pub fn parse_deck(source: &str) -> Result<Deck, String> {
                     ));
                 }
                 let kvs = parse_kv_tokens(&toks[4..]).map_err(err_ctx)?;
+                validate_keys(&kvs, &["area", "vt", "temp"]).map_err(err_ctx)?;
                 deck.elements.push(Element::Diode {
                     name: head.to_string(),
                     n_anode: toks[1].clone(),
@@ -1076,6 +1118,7 @@ pub fn parse_deck(source: &str) -> Result<Deck, String> {
                     model: toks[3].clone(),
                     area: kvs.get("area").cloned().unwrap_or_else(|| Expr::num(1.0)),
                     vt_override: kvs.get("vt").cloned(),
+                    temp_k: kvs.get("temp").cloned(),
                 });
             }
             'M' => {
@@ -1085,6 +1128,7 @@ pub fn parse_deck(source: &str) -> Result<Deck, String> {
                     ));
                 }
                 let kvs = parse_kv_tokens(&toks[6..]).map_err(err_ctx)?;
+                validate_keys(&kvs, &["w", "l", "nfin", "nsheet", "dtfin", "dtns", "dvth", "dlisp", "rth", "vt", "tamb"]).map_err(err_ctx)?;
                 deck.elements.push(Element::Mosfet {
                     name: head.to_string(),
                     n_drain: toks[1].clone(),
@@ -1092,13 +1136,12 @@ pub fn parse_deck(source: &str) -> Result<Deck, String> {
                     n_source: toks[3].clone(),
                     n_bulk: toks[4].clone(),
                     model: toks[5].clone(),
-                    w: kvs.get("w").cloned().unwrap_or_else(|| Expr::num(1.0e-6)),
-                    l: kvs.get("l").cloned().unwrap_or_else(|| Expr::num(1.0e-6)),
+                    w: kvs.get("w").cloned(),
+                    l: kvs.get("l").cloned(),
                     nfin: kvs
                         .get("nfin")
                         .or_else(|| kvs.get("nsheet"))
-                        .cloned()
-                        .unwrap_or_else(|| Expr::num(1.0)),
+                        .cloned(),
                     dtfin_nm: kvs
                         .get("dtfin")
                         .or_else(|| kvs.get("dtns"))
@@ -1118,6 +1161,7 @@ pub fn parse_deck(source: &str) -> Result<Deck, String> {
                     ));
                 }
                 let kvs = parse_kv_tokens(&toks[5..]).map_err(err_ctx)?;
+                validate_keys(&kvs, &["area", "deg", "vt", "temp"]).map_err(err_ctx)?;
                 deck.elements.push(Element::Bjt {
                     name: head.to_string(),
                     n_col: toks[1].clone(),

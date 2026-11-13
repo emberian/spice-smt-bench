@@ -1,12 +1,78 @@
+import Init.Data.Rat.Lemmas
+
 /-!
 # Transcendental Circuit, Multi-PDK Transistor, PCB EM & TCAD Physics Models
 
 Defines the self-contained algebraic/analytic carrier structure `TranscendentalField R`
-used across all 19 `spice-smt-bench` target specifications, together with complete
-machine-checked equivalence and physical monotonicity lemmas.
+used across all 19 target specifications. Results are conditional on this
+interface; this library does not construct a concrete real-exponential instance.
 -/
 
 namespace SpiceSmtBench
+
+/-- A minimal algebraic ordered-field interface, independent of transcendental
+operations. Its rational model below witnesses consistency of these laws. -/
+structure AlgebraicOrderedField (R : Type) where
+  zero : R
+  one : R
+  add : R → R → R
+  mul : R → R → R
+  neg : R → R
+  inv : R → R
+  le : R → R → Prop
+  zero_ne_one : zero ≠ one
+  add_assoc : ∀ a b c, add (add a b) c = add a (add b c)
+  add_comm : ∀ a b, add a b = add b a
+  add_zero : ∀ a, add a zero = a
+  add_neg : ∀ a, add a (neg a) = zero
+  mul_assoc : ∀ a b c, mul (mul a b) c = mul a (mul b c)
+  mul_comm : ∀ a b, mul a b = mul b a
+  mul_one : ∀ a, mul a one = a
+  mul_add : ∀ a b c, mul a (add b c) = add (mul a b) (mul a c)
+  mul_inv : ∀ a, a ≠ zero → mul a (inv a) = one
+  le_refl : ∀ a, le a a
+  le_total : ∀ a b, le a b ∨ le b a
+  le_trans : ∀ a b c, le a b → le b c → le a c
+  le_antisymm : ∀ a b, le a b → le b a → a = b
+  add_le : ∀ a b c, le a b → le (add c a) (add c b)
+  mul_nonneg : ∀ a b, le zero a → le zero b → le zero (mul a b)
+
+namespace AlgebraicOrderedField
+
+/-- Canonical reduced rationals; interval endpoints may separately retain an
+unreduced numerator and denominator for efficient certificate calculations. -/
+abbrev QRat := Rat
+
+def qrat : AlgebraicOrderedField QRat where
+  zero := 0
+  one := 1
+  add := (· + ·)
+  mul := (· * ·)
+  neg := Neg.neg
+  inv := Inv.inv
+  le := (· ≤ ·)
+  zero_ne_one := by decide
+  add_assoc := Rat.add_assoc
+  add_comm := Rat.add_comm
+  add_zero := Rat.add_zero
+  add_neg := Rat.add_neg_cancel
+  mul_assoc := Rat.mul_assoc
+  mul_comm := Rat.mul_comm
+  mul_one := Rat.mul_one
+  mul_add := Rat.mul_add
+  mul_inv := Rat.mul_inv_cancel
+  le_refl := fun _ => Rat.le_refl
+  le_total := fun _ _ => Rat.le_total
+  le_trans := fun _ _ _ => Rat.le_trans
+  le_antisymm := fun _ _ => Rat.le_antisymm
+  add_le := fun _ _ _ h => Rat.add_le_add_left.mpr h
+  mul_nonneg := fun a b ha hb => by
+    simpa using (Rat.mul_le_mul_of_nonneg_left hb ha)
+
+/-- Kernel computation exercises normalized arithmetic and order. -/
+theorem qrat_computation : (1/2 + 1/3 : QRat) = 5/6 ∧ (0 : QRat) < 5/6 := by decide +kernel
+
+end AlgebraicOrderedField
 
 /-- Ordered real field equipped with exponential `exp` and EKV softplus `ln1pExp`,
     parameterizing all `spice2smt` target specifications without external library bloat. -/
@@ -20,11 +86,14 @@ structure TranscendentalField (R : Type) where
   neg     : R → R
   exp     : R → R
   ln1pExp : R → R
+  sqrt : R → R
   ofInt   : Int → R
   ofRat   : Int → Nat → R
-  pow10   : Nat → R
   le      : R → R → Prop
   lt      : R → R → Prop
+
+  sqrt_nonneg : ∀ x, le zero (sqrt x)
+  sqrt_sq : ∀ x, le zero x → mul (sqrt x) (sqrt x) = x
 
   -- Rational embedding & exact ring identities
   zero_eq_ofRat      : zero = ofRat 0 1
@@ -64,6 +133,7 @@ structure TranscendentalField (R : Type) where
   div_self_pos       : ∀ x, lt zero x → div x x = one
   div_zero_num       : ∀ y, lt zero y → div zero y = zero
   div_two_add_self   : ∀ x, add (div x (ofInt 2)) (div x (ofInt 2)) = x
+  mul_div_cancel_pos : ∀ x y, lt zero y → mul (div x y) y = x
   neg_div            : ∀ x y, neg (div x y) = div (neg x) y
 
   -- Linear order & monotonicity laws
@@ -87,10 +157,133 @@ structure TranscendentalField (R : Type) where
   -- Transcendental `exp` & EKV softplus laws
   exp_zero           : exp zero = one
   exp_pos            : ∀ x, lt zero (exp x)
+  exp_pos_surj       : ∀ y : R, lt zero y → ∃ x : R, exp x = y
   exp_add            : ∀ x y, exp (add x y) = mul (exp x) (exp y)
   exp_mono           : ∀ x y, le x y → le (exp x) (exp y)
   one_add_le_exp     : ∀ x, le (add one x) (exp x)
   ln1pExp_spec       : ∀ z, exp (ln1pExp z) = add one (exp z)
+
+namespace TranscendentalField
+
+/-- Powers of ten are derived from the rational embedding. -/
+def pow10 {R : Type} (TF : TranscendentalField R) : Nat → R
+  | 0 => TF.one
+  | n + 1 => TF.mul (TF.ofInt 10) (pow10 TF n)
+
+theorem pow10_eq_ofRat {R : Type} (TF : TranscendentalField R) (n : Nat) :
+    TF.pow10 n = TF.ofRat ((10 : Int)^n) 1 := by
+  induction n with
+  | zero => exact TF.one_eq_ofRat
+  | succ n ih =>
+    simp only [pow10, ih, TF.ofInt_eq_ofRat]
+    rw [TF.ofRat_mul 10 ((10 : Int)^n) 1 1 (by decide) (by decide)]
+    simp only [Nat.mul_one, Int.pow_succ, Int.mul_comm]
+
+theorem pow10_pos {R : Type} (TF : TranscendentalField R) (n : Nat) :
+    TF.lt TF.zero (TF.pow10 n) := by
+  rw [pow10_eq_ofRat, TF.zero_eq_ofRat]
+  apply (TF.ofRat_lt_iff 0 ((10 : Int)^n) 1 1 (by decide) (by decide)).mpr
+  simpa using (Int.pow_pos (m := n) (show (0 : Int) < 10 from by decide))
+
+/-- Cancel a common additive term using the ring identities. -/
+theorem add_le_cancel_right {R : Type} (TF : TranscendentalField R) (a b c : R)
+    (h : TF.le (TF.add a c) (TF.add b c)) : TF.le a b := by
+  have h' := TF.add_le_add _ _ (TF.neg c) (TF.neg c) h (TF.le_refl _)
+  simpa only [TF.add_assoc, TF.add_neg_self, TF.add_zero] using h'
+
+theorem exp_injective {R : Type} (TF : TranscendentalField R) (x y : R)
+    (h : TF.exp x = TF.exp y) : x = y := by
+  have bound : ∀ a b : R, TF.exp a = TF.exp b → TF.le a b := by
+    intro a b hab
+    have he : TF.exp (TF.add a (TF.neg b)) = TF.one := by
+      rw [TF.exp_add, hab, ← TF.exp_add, TF.add_neg_self, TF.exp_zero]
+    have hb := TF.one_add_le_exp (TF.add a (TF.neg b))
+    rw [he] at hb
+    have hz : TF.le (TF.add (TF.add a (TF.neg b)) TF.one) (TF.add TF.zero TF.one) := by
+      simpa only [TF.zero_add, TF.add_comm] using hb
+    have hd := TF.add_le_cancel_right _ _ TF.one hz
+    have hs := TF.add_le_add _ _ b b hd (TF.le_refl b)
+    have hn : TF.add (TF.neg b) b = TF.zero := by rw [TF.add_comm, TF.add_neg_self]
+    simpa only [TF.add_assoc, hn, TF.add_zero, TF.zero_add] using hs
+  exact TF.le_antisymm x y (bound x y h) (bound y x h.symm)
+
+theorem exp_strictMono {R : Type} (TF : TranscendentalField R) (x y : R)
+    (h : TF.lt x y) : TF.lt (TF.exp x) (TF.exp y) := by
+  obtain ⟨hxy, hnot⟩ := (TF.lt_iff_le_not_le x y).mp h
+  have he := TF.exp_mono x y hxy
+  apply (TF.lt_iff_le_not_le _ _).mpr
+  refine ⟨he, fun hyx => ?_⟩
+  have hEq := TF.exp_injective x y (TF.le_antisymm _ _ he hyx)
+  exact hnot (hEq ▸ TF.le_refl x)
+
+/-- Positive square roots are unique; positive surjectivity supplies logarithms. -/
+theorem positive_sqrt_unique {R : Type} (TF : TranscendentalField R) (a b : R)
+    (ha : TF.lt TF.zero a) (hb : TF.lt TF.zero b)
+    (hsq : TF.mul a a = TF.mul b b) : a = b := by
+  obtain ⟨u, hu⟩ := TF.exp_pos_surj a ha
+  obtain ⟨v, hv⟩ := TF.exp_pos_surj b hb
+  have hd : TF.add u u = TF.add v v := by
+    apply TF.exp_injective
+    rw [TF.exp_add, TF.exp_add, hu, hv, hsq]
+  have cancel : ∀ x y : R, TF.le (TF.add x x) (TF.add y y) → TF.le x y := by
+    intro x y h
+    cases TF.le_total x y with
+    | inl hxy => exact hxy
+    | inr hyx =>
+      have h1 := TF.add_le_add y x x x hyx (TF.le_refl x)
+      have h2 := TF.le_trans _ _ _ h1 h
+      rw [TF.add_comm y x] at h2
+      exact TF.add_le_cancel_right x y y h2
+  have huv := TF.le_antisymm u v (cancel u v (hd ▸ TF.le_refl _))
+    (cancel v u (hd ▸ TF.le_refl _))
+  rw [← hu, ← hv, huv]
+
+theorem neg_neg {R : Type} (TF : TranscendentalField R) (x : R) : TF.neg (TF.neg x) = x := by
+  calc
+    TF.neg (TF.neg x) = TF.add (TF.neg (TF.neg x)) TF.zero := (TF.add_zero _).symm
+    _ = TF.add (TF.neg (TF.neg x)) (TF.add (TF.neg x) x) := by rw [TF.add_comm (TF.neg x) x, TF.add_neg_self]
+    _ = TF.add (TF.add (TF.neg (TF.neg x)) (TF.neg x)) x := (TF.add_assoc _ _ _).symm
+    _ = x := by rw [TF.add_comm (TF.neg (TF.neg x)) (TF.neg x), TF.add_neg_self, TF.zero_add]
+
+theorem mul_neg {R : Type} (TF : TranscendentalField R) (x y : R) :
+    TF.mul x (TF.neg y) = TF.neg (TF.mul x y) := by
+  have h : TF.add (TF.mul x y) (TF.mul x (TF.neg y)) = TF.zero := by
+    rw [← TF.mul_add, TF.add_neg_self, TF.mul_zero]
+  have h' := congrArg (fun z => TF.add (TF.neg (TF.mul x y)) z) h
+  simpa only [← TF.add_assoc, TF.add_comm, TF.add_neg_self, TF.zero_add, TF.add_zero] using h'
+
+theorem mul_le_mul_nonpos_left {R : Type} (TF : TranscendentalField R) (c a b : R)
+    (hc : TF.le c TF.zero) (hab : TF.le a b) : TF.le (TF.mul c b) (TF.mul c a) := by
+  have hn := TF.neg_le_neg c TF.zero hc
+  have nz : TF.neg TF.zero = TF.zero := by
+    have h := TF.add_neg_self TF.zero
+    simpa only [TF.zero_add] using h
+  rw [nz] at hn
+  have h := TF.mul_le_mul_nonneg_left (TF.neg c) a b hn hab
+  rw [TF.mul_comm (TF.neg c) a, TF.mul_comm (TF.neg c) b, TF.mul_neg, TF.mul_neg] at h
+  have h' := TF.neg_le_neg _ _ h
+  simpa only [TF.neg_neg, TF.mul_comm] using h'
+
+theorem exp_neg {R : Type} (TF : TranscendentalField R) (x : R) :
+    TF.exp (TF.neg x) = TF.div TF.one (TF.exp x) := by
+  have he : TF.mul (TF.exp (TF.neg x)) (TF.exp x) = TF.one := by
+    rw [← TF.exp_add, TF.add_comm, TF.add_neg_self, TF.exp_zero]
+  have hd := TF.mul_div_cancel_pos TF.one (TF.exp x) (TF.exp_pos x)
+  have cancel : ∀ a b, TF.mul a (TF.exp x) = TF.mul b (TF.exp x) → a = b := by
+    intro a b h
+    have h' := congrArg (fun z => TF.mul z (TF.exp (TF.neg x))) h
+    have hp : TF.mul (TF.exp x) (TF.exp (TF.neg x)) = TF.one := by rw [TF.mul_comm]; exact he
+    simpa only [TF.mul_assoc, hp, TF.mul_one] using h'
+  exact cancel _ _ (he.trans hd.symm)
+
+theorem div_eq_mul_inv_pos {R : Type} (TF : TranscendentalField R) (x y : R)
+    (hy : TF.lt TF.zero y) : TF.div x y = TF.mul x (TF.div TF.one y) := by
+  have hi := TF.mul_div_cancel_pos TF.one y hy
+  have hyi : TF.mul y (TF.div TF.one y) = TF.one := by rw [TF.mul_comm]; exact hi
+  have h := congrArg (fun z => TF.mul z (TF.div TF.one y)) (TF.mul_div_cancel_pos x y hy)
+  simpa only [TF.mul_assoc, hyi, TF.mul_one] using h
+
+end TranscendentalField
 
 namespace PhysicsModels
 
@@ -157,6 +350,18 @@ theorem ekv_softplus_witness_nonneg {R : Type} (TF : TranscendentalField R) (z :
       rw [TF.add_zero TF.one] at h_one_add
       exact TF.sub_le_sub (TF.add (TF.exp z) TF.one) TF.one TF.one TF.one h_one_add (TF.le_refl TF.one)
     exact False.elim (hnot_ez_le_0 h_ez_le_0)
+
+theorem ekv_softplus_unique {R : Type} (TF : TranscendentalField R) (z y : R)
+    (h : ekvSoftplusRel TF z y) : y = TF.ln1pExp z :=
+  TF.exp_injective y (TF.ln1pExp z) (h.trans (TF.ln1pExp_spec z).symm)
+
+theorem ekv_softplus_iff {R : Type} (TF : TranscendentalField R) (z y : R) :
+    ekvSoftplusRel TF z y ↔ y = TF.ln1pExp z := by
+  constructor
+  · exact ekv_softplus_unique TF z y
+  · intro h
+    rw [h]
+    exact TF.ln1pExp_spec z
 
 /-- Coupled 2nm Gate-All-Around (`gt2n`) stacked-nanosheet electro-thermal balance:
     `T_ch = T_amb + R_th * V_ds * I_stack`. -/
@@ -269,14 +474,34 @@ theorem exp_half_lower_proved {R : Type} (TF : TranscendentalField R) :
 /-- Path-B Solver-Target Lemma 2 (`BernSmallTarget`):
     Singularity-free global Euler-coth quadratic/quartic bracket specification around `Δ = 0`,
     eliminating removable `0 / 0` division in Scharfetter–Gummel TCAD stamps. -/
-def BernGlobalBracketSpec {R : Type} (TF : TranscendentalField R) : Prop :=
-  ∀ (delta bp : R),
-    TF.mul bp (TF.sub (TF.exp delta) TF.one) = delta →
+def BernGlobalBracketSpec {R : Type} (TF : TranscendentalField R) (B : R → R) : Prop :=
+  ∀ delta : R,
+    let bp := B delta
     let d2 := TF.mul delta delta
     let d4 := TF.mul d2 d2
     let upper := TF.add (TF.sub TF.one (TF.div delta (TF.ofInt 2))) (TF.div d2 (TF.ofInt 12))
     let lower := TF.sub upper (TF.div d4 (TF.ofInt 720))
-    (delta ≠ TF.zero → TF.le lower bp ∧ TF.le bp upper)
+    TF.mul bp (TF.sub (TF.exp delta) TF.one) = delta ∧
+    TF.le lower bp ∧ TF.le bp upper
+
+/-- The brackets, unlike the transport identity alone, fix the removable singularity. -/
+theorem bern_global_bracket_zero {R : Type} (TF : TranscendentalField R)
+    (B : R → R) (h : BernGlobalBracketSpec TF B) : B TF.zero = TF.one := by
+  have pos : ∀ n : Nat, 0 < n → TF.lt TF.zero (TF.ofInt (n : Int)) := by
+    intro n hn
+    rw [TF.zero_eq_ofRat, TF.ofInt_eq_ofRat]
+    apply (TF.ofRat_lt_iff 0 (n : Int) 1 1 (by decide) (by decide)).mpr
+    omega
+  have hb := (h TF.zero).2
+  have subzero : TF.sub TF.one TF.zero = TF.one := by
+    rw [TF.one_eq_ofRat, TF.zero_eq_ofRat, TF.ofRat_sub 1 0 1 1 (by decide) (by decide)]
+    rfl
+  simp only [TF.mul_zero] at hb
+  rw [TF.div_zero_num (TF.ofInt 2) (pos 2 (by decide)),
+      TF.div_zero_num (TF.ofInt 12) (pos 12 (by decide)),
+      TF.div_zero_num (TF.ofInt 720) (pos 720 (by decide)),
+      subzero, TF.add_zero, subzero] at hb
+  exact TF.le_antisymm _ _ hb.2 hb.1
 
 end PhysicsModels
 end SpiceSmtBench

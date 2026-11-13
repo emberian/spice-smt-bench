@@ -18,8 +18,8 @@
 Vsup vdd 0 DC {vdd}
 Vin  in  0 DC {vin_low}
 
-Mp out in vdd vdd ASAP7_PFET_RVT L={21.0 + dlg_nm} Nfin=2 dTfin={dtfin_nm} Tamb={temp_k}
-Mn out in 0   0   ASAP7_NFET_RVT L={21.0 + dlg_nm} Nfin=2 dTfin={dtfin_nm} Tamb={temp_k}
+Mp out in vdd vdd ASAP7_PFET_RVT L={(21.0 + dlg_nm)*1e-9} Nfin=2 dTfin={dtfin_nm} Tamb={temp_k}
+Mn out in 0   0   ASAP7_NFET_RVT L={(21.0 + dlg_nm)*1e-9} Nfin=2 dTfin={dtfin_nm} Tamb={temp_k}
 
 * Negated safety target: logic-high output droop below 0.54 V under noisy low input
 .unsafe v(out) < 0.54

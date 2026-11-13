@@ -22,7 +22,7 @@ Vdn  tx_n 0 DC -0.5
 .pcb_microstrip tl50 tx rx 0 len=0.050 w0=180.0e-6 dw={dw_etch} h0=100.0e-6 dh={dh_lam} t_cu={t_cu} er={er_lam}
 Rterm rx 0 50.0
 
-.pcb_coupled_diffpair diff90 tx_p tx_n rx_p rx_n 0 0 len=0.050 w0=182.0e-6 dw={dw_etch} s0=180.0e-6 ds={ds_etch} h0=100.0e-6 dh={dh_lam} t_cu={t_cu} er_p={er_lam} er_n={er_lam}
+.pcb_coupled_diffpair diff90 tx_p tx_n rx_p rx_n 0 0 len=0.050 w0=170.0e-6 dw={dw_etch} s0=180.0e-6 ds={ds_etch} h0=100.0e-6 dh={dh_lam} t_cu={t_cu} er_p={er_lam} er_n={er_lam}
 Rtp rx_p 0 45.0
 Rtn rx_n 0 45.0
 

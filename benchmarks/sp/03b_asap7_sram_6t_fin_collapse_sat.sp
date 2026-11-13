@@ -1,31 +1,26 @@
-* Suite A-03b: ASAP7 7nm 6T FinFET SRAM Read-Upset Collapse Under Excessive Fin-Thinning + WFV (SAT)
+* Six-transistor FinFET SRAM read-disturb, stored 1; manufacturing-defect twin b
 .pdk asap7
 .expected sat
-.mode dc
-.default_vbound [-0.05, 0.85]
-
-* Out-of-spec fin-etch thinning + metal-gate workfunction fluctuation tail
-.param vdd       [0.60, 0.70]
-.param dtfin_nm  [-1.20, 1.20]
-.param dlg_nm    [-2.00, 2.00]
-.param dphim_q   [-0.110, 0.110]
-.param dphim_qb  [-0.110, 0.110]
-
-.bound v(vdd) [0.60, 0.70]
-.bound v(q)   [-0.02, 0.72]
-.bound v(qb)  [-0.02, 0.72]
-
-Vsup vdd 0 DC {vdd}
-
-Mp_q  q  qb vdd vdd ASAP7_PFET_SRAM L={21.0 + dlg_nm} Nfin=1 dTfin={dtfin_nm} dVth={dphim_q}
-Mn_q  q  qb 0   0   ASAP7_NFET_SRAM L={21.0 + dlg_nm} Nfin=2 dTfin={dtfin_nm} dVth={dphim_q}
-Mp_qb qb q  vdd vdd ASAP7_PFET_SRAM L={21.0 + dlg_nm} Nfin=1 dTfin={dtfin_nm} dVth={dphim_qb}
-Mn_qb qb q  0   0   ASAP7_NFET_SRAM L={21.0 + dlg_nm} Nfin=2 dTfin={dtfin_nm} dVth={dphim_qb}
-
-* Heavy bitline access disturbance
-R_pg_q  vdd q  5500
-R_pg_qb vdd qb 5500
-
-* Read-upset / metastable collapse condition: differential storage margin < 0.20 V
-.unsafe v(q) - v(qb) < 0.20
+.mode tran dt=10p steps=20 method=be
+.default_vbound [-0.05, 0.80]
+.param dtfin_nm [-0.35, 0.35]
+.param dt_fin_pdb [-2.2, -1.4]
+.param dphim [0.42, 0.48]
+.bound v(q) [-0.05, 0.80]
+.bound v(qb) [-0.05, 0.80]
+.init v(q) = 0.70
+.init v(qb) = 0.0
+Vsup vdd 0 DC 0.70
+Vbl bl 0 DC 0.70
+Vblb blb 0 DC 0.70
+Vwl wl 0 DC 0.70
+Mpu_a q qb vdd vdd ASAP7_PFET_SRAM Nfin=1 dTfin={dtfin_nm}
+Mpd_a q qb 0 0 ASAP7_NFET_SRAM Nfin=2 dTfin={dtfin_nm}
+Mpg_a bl wl q 0 ASAP7_NFET_SRAM Nfin=1
+Mpu_b qb q vdd vdd ASAP7_PFET_SRAM Nfin=1 dTfin={dtfin_nm}
+Mpd_b qb q 0 0 ASAP7_NFET_SRAM Nfin=2 dTfin={dt_fin_pdb} dVth={dphim}
+Mpg_b blb wl qb 0 ASAP7_NFET_SRAM Nfin=1
+Cq q 0 1f
+Cqb qb 0 1f
+.unsafe v(q) - v(qb) < 0.12
 .end

@@ -1,33 +1,26 @@
-* Suite A-03a: ASAP7 7nm 6T FinFET SRAM Bitcell Read-Disturb Retention Margin (In-Spec EUV/SAQP Box)
+* Six-transistor FinFET SRAM read-disturb, stored 1; manufacturing-defect twin a
 .pdk asap7
 .expected unsat
-.mode dc
-.default_vbound [-0.05, 0.85]
-
-* Tight 7nm EUV + SAQP fin-etch & workfunction mismatch box
-.param vdd       [0.67, 0.73]
-.param dtfin_nm  [-0.35, 0.35]
-.param dlg_nm    [-0.80, 0.80]
-.param dphim_q   [-0.018, 0.018]
-.param dphim_qb  [-0.018, 0.018]
-
-* Focus state box on stored-'1' retention basin (q high, qb low under bitline read disturb)
-.bound v(vdd) [0.67, 0.73]
-.bound v(q)   [0.45, 0.75]
-.bound v(qb)  [0.00, 0.28]
-
-Vsup vdd 0 DC {vdd}
-
-* Cross-coupled 1:1:2 FinFET SRAM inverters + precharged bitline read-access load
-Mp_q  q  qb vdd vdd ASAP7_PFET_SRAM L={21.0 + dlg_nm} Nfin=1 dTfin={dtfin_nm} dVth={dphim_q}
-Mn_q  q  qb 0   0   ASAP7_NFET_SRAM L={21.0 + dlg_nm} Nfin=2 dTfin={dtfin_nm} dVth={dphim_q}
-Mp_qb qb q  vdd vdd ASAP7_PFET_SRAM L={21.0 + dlg_nm} Nfin=1 dTfin={dtfin_nm} dVth={dphim_qb}
-Mn_qb qb q  0   0   ASAP7_NFET_SRAM L={21.0 + dlg_nm} Nfin=2 dTfin={dtfin_nm} dVth={dphim_qb}
-
-* Pass-gate read-disturb equivalent pull-up to precharged bitlines
-R_pg_q  vdd q  14000
-R_pg_qb vdd qb 14000
-
-* Negated safety target: differential state margin collapses below 0.25 V
-.unsafe v(q) - v(qb) < 0.25
+.mode tran dt=10p steps=20 method=be
+.default_vbound [-0.05, 0.80]
+.param dtfin_nm [-0.35, 0.35]
+.param dt_fin_pdb [-0.35, 0.35]
+.param dphim [-0.015, 0.015]
+.bound v(q) [-0.05, 0.80]
+.bound v(qb) [-0.05, 0.80]
+.init v(q) = 0.70
+.init v(qb) = 0.0
+Vsup vdd 0 DC 0.70
+Vbl bl 0 DC 0.70
+Vblb blb 0 DC 0.70
+Vwl wl 0 DC 0.70
+Mpu_a q qb vdd vdd ASAP7_PFET_SRAM Nfin=1 dTfin={dtfin_nm}
+Mpd_a q qb 0 0 ASAP7_NFET_SRAM Nfin=2 dTfin={dtfin_nm}
+Mpg_a bl wl q 0 ASAP7_NFET_SRAM Nfin=1
+Mpu_b qb q vdd vdd ASAP7_PFET_SRAM Nfin=1 dTfin={dtfin_nm}
+Mpd_b qb q 0 0 ASAP7_NFET_SRAM Nfin=2 dTfin={dt_fin_pdb} dVth={dphim}
+Mpg_b blb wl qb 0 ASAP7_NFET_SRAM Nfin=1
+Cq q 0 1f
+Cqb qb 0 1f
+.unsafe v(q) - v(qb) < 0.12
 .end

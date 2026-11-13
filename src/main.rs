@@ -14,6 +14,8 @@ fn print_usage() {
 USAGE:
   spice2smt [compile] <deck.sp> [--dialect smt2-exp|dreal-ode|lean4] [--pdk <profile>] [--logic <QF_NRA|QF_NRAT|ALL>] [--name <Def>] [-o <out>]
   spice2smt batch <sp_dir> [--out-smt2-exp <dir>] [--out-dreal-ode <dir>] [--out-lean <file.lean>] [--logic <LOGIC>]
+  spice2smt emit-lean <deck.sp> [--name <Def>] [--pdk <profile>] [-o <out.lean>]
+  spice2smt generate-paving <deck.sp> <variable=mid>... -o <certificate.json>
   spice2smt verify-paving <deck.sp> <paving.json>
   spice2smt list-pdks
 
@@ -59,6 +61,21 @@ fn run() -> Result<(), String> {
                     prof.summary
                 );
             }
+            Ok(())
+        }
+        "generate-paving" => {
+            if args.len() < 5 || args[args.len() - 2] != "-o" {
+                return Err("usage: spice2smt generate-paving <deck.sp> <variable=mid>... -o <certificate.json>".to_string());
+            }
+            let source = fs::read_to_string(&args[1]).map_err(|e| e.to_string())?;
+            let system = stamp::stamp_deck(&parser::parse_deck(&source)?)?;
+            let mut splits = Vec::new();
+            for hint in &args[2..args.len() - 2] {
+                let (variable, midpoint) = hint.split_once('=').ok_or("expected variable=midpoint")?;
+                splits.push((variable.to_string(), parser::parse_spice_number(midpoint)?));
+            }
+            let certificate = paving::generate_paving(&system, &splits)?;
+            fs::write(&args[args.len() - 1], format!("{}\n", certificate.to_json())).map_err(|e| e.to_string())?;
             Ok(())
         }
         "verify-paving" => {
@@ -126,6 +143,9 @@ fn run() -> Result<(), String> {
                     other => return Err(format!("unknown batch flag `{other}`")),
                 }
                 i += 1;
+            }
+            if out_exp.is_none() && out_dreal.is_none() && out_lean.is_none() {
+                return Err("batch requires at least one output flag".to_string());
             }
             if let Some(ref d) = out_exp {
                 fs::create_dir_all(d).map_err(|e| format!("mkdir {}: {e}", d.display()))?;
@@ -203,11 +223,12 @@ fn run() -> Result<(), String> {
             Ok(())
         }
         _ => {
-            let start = if args[0] == "compile" { 1 } else { 0 };
+            let lean_alias = args[0] == "emit-lean";
+            let start = if args[0] == "compile" || lean_alias { 1 } else { 0 };
             let sp_path = args
                 .get(start)
                 .ok_or("missing input `<deck.sp>` path")?;
-            let mut dialect = Dialect::Smt2Exp;
+            let mut dialect = if lean_alias { Dialect::Lean4 } else { Dialect::Smt2Exp };
             let mut pdk_override: Option<PdkId> = None;
             let mut def_name: Option<String> = None;
             let mut logic_override: Option<String> = None;
@@ -255,6 +276,9 @@ fn run() -> Result<(), String> {
                 i += 1;
             }
 
+            if dialect != Dialect::Lean4 && def_name.is_some() {
+                return Err("--name is only supported for Lean output".to_string());
+            }
             let src = fs::read_to_string(sp_path)
                 .map_err(|e| format!("failed to read `{sp_path}`: {e}"))?;
             let default_stem = Path::new(sp_path)
@@ -265,7 +289,7 @@ fn run() -> Result<(), String> {
                 &src,
                 dialect,
                 pdk_override,
-                Some(def_name.as_deref().unwrap_or(default_stem)),
+                if dialect == Dialect::Lean4 { Some(def_name.as_deref().unwrap_or(default_stem)) } else { None },
                 logic_override.as_deref(),
             )?;
             if let Some(dst) = out_path {

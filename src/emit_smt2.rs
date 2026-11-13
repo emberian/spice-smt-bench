@@ -1,4 +1,4 @@
-//! SMT-LIB2 emitters for `--dialect smt2-exp` (`QF_NRA + exp`) and `--dialect dreal-ode` (`define-ode`).
+//! SMT-LIB2 emitters for `--dialect smt2-exp` (`ALL`) and `--dialect dreal-ode` (`define-ode`).
 
 use std::collections::BTreeMap;
 use std::fmt::Write;
@@ -8,62 +8,21 @@ use crate::stamp::{OdeState, StampedBody, StampedSystem, StampedVar, TaggedConst
 
 /// Format an `f64` strictly as an SMT-LIB 2.6 `Real` term without `1e-...` identifier ambiguity.
 pub fn format_smt2_real(v: f64) -> String {
-    if !v.is_finite() {
-        return "0.0".to_string();
-    }
-    if v == 0.0 {
-        return "0.0".to_string();
-    }
-    if v < 0.0 {
-        return format!("(- {})", format_smt2_real(-v));
-    }
-    if (1.0e-3..1.0e9).contains(&v) {
-        let mut s = format!("{v:.12}");
-        while s.ends_with('0') {
-            s.pop();
-        }
-        if s.ends_with('.') {
-            s.push('0');
-        }
-        return s;
-    }
-    // Scientific range: represent exactly via rational power-of-10 scaling `(/ mantissa 10^k)` or `(* mantissa 10^k)`
-    let sci = format!("{v:.14e}");
-    if let Some((mant_str, exp_str)) = sci.split_once('e') {
-        if let Ok(exp10) = exp_str.parse::<i32>() {
-            let mut mant = mant_str.to_string();
-            while mant.contains('.') && mant.ends_with('0') {
-                mant.pop();
-            }
-            if mant.ends_with('.') {
-                mant.push('0');
-            }
-            if !mant.contains('.') {
-                mant.push_str(".0");
-            }
-            if exp10 >= 0 {
-                let mut pow = String::from("1");
-                for _ in 0..(exp10 as usize) {
-                    pow.push('0');
-                }
-                pow.push_str(".0");
-                return format!("(* {mant} {pow})");
-            } else {
-                let mut pow = String::from("1");
-                for _ in 0..((-exp10) as usize) {
-                    pow.push('0');
-                }
-                pow.push_str(".0");
-                return format!("(/ {mant} {pow})");
-            }
-        }
-    }
-    format!("{v:.12}")
+    let (negative, numerator, denominator) = crate::numeral::exact_f64_to_rat(v)
+        .expect("emitter requires finite stamped constants");
+    let _ = (numerator, denominator);
+    let mut magnitude = format!("{}", v.abs());
+    if !magnitude.contains('.') { magnitude.push_str(".0"); }
+
+    if negative { format!("(- {magnitude})") } else { magnitude }
 }
 
 fn emit_expr_smt2(e: &Expr, allow_log: bool) -> Result<String, String> {
     match e {
-        Expr::Num(v) => Ok(format_smt2_real(*v)),
+        Expr::Num(v) => {
+            crate::numeral::exact_f64_to_rat(*v)?;
+            Ok(format_smt2_real(*v))
+        },
         Expr::Var(name) => Ok(name.clone()),
         Expr::NodeVolt(n) => Ok(format!("v_{}", sanitize_ident(n))),
         Expr::Time => Ok("t".to_string()),
@@ -89,6 +48,7 @@ fn emit_expr_smt2(e: &Expr, allow_log: bool) -> Result<String, String> {
             emit_expr_smt2(b, allow_log)?
         )),
         Expr::Exp(a) => Ok(format!("(exp {})", emit_expr_smt2(a, allow_log)?)),
+        Expr::Sqrt(a) => if allow_log { Ok(format!("(sqrt {})", emit_expr_smt2(a, allow_log)?)) } else { Err("unlowered square root".into()) },
         Expr::Ln1pExp(a) => {
             if allow_log {
                 Ok(format!("(log (+ 1.0 (exp {})))", emit_expr_smt2(a, allow_log)?))
@@ -171,16 +131,38 @@ fn lower_step_ln1p(
             lower_step_ln1p(b, step_idx, aux_counter, extra_vars, extra_eqs),
         ),
         Expr::Exp(a) => Expr::exp(lower_step_ln1p(a, step_idx, aux_counter, extra_vars, extra_eqs)),
+        Expr::Sqrt(a) => {
+            let radicand = lower_step_ln1p(a, step_idx, aux_counter, extra_vars, extra_eqs);
+            for c in extra_eqs.iter() {
+                if let Formula::Cmp { op: CmpOp::Eq, lhs: Expr::Mul(a, b), rhs } = &c.formula {
+                    if a == b && rhs == &radicand { return (**a).clone(); }
+                }
+            }
+            *aux_counter += 1;
+            let name = format!("r_sqrt_s{step_idx}_{}", *aux_counter);
+            let root = Expr::var(&name);
+            extra_vars.push(StampedVar { name, bounds: None, comment: "Positive square root".into() });
+            extra_eqs.push(TaggedConstraint { comment: "Square root domain".into(), formula: Formula::Cmp { op: CmpOp::Ge, lhs: root.clone(), rhs: Expr::num(0.0) } });
+            extra_eqs.push(TaggedConstraint { comment: "Square root equation".into(), formula: Formula::Cmp { op: CmpOp::Eq, lhs: Expr::sq(root.clone()), rhs: radicand } });
+            root
+        }
         Expr::Ln1pExp(a) => {
             let z = lower_step_ln1p(a, step_idx, aux_counter, extra_vars, extra_eqs);
+            // Share identical softplus terms across all derivatives at this sample.
+            let defining_rhs = Expr::add(Expr::num(1.0), Expr::exp(z.clone()));
+            for c in extra_eqs.iter() {
+                if let Formula::Cmp { op: CmpOp::Eq, lhs: Expr::Exp(arg), rhs } = &c.formula {
+                    if rhs == &defining_rhs { return (**arg).clone(); }
+                }
+            }
             *aux_counter += 1;
             let y_name = format!("y_sp_s{step_idx}_{}", *aux_counter);
             extra_vars.push(StampedVar {
                 name: y_name.clone(),
-                lo: 0.0,
-                hi: 2000.0,
+                bounds: None,
                 comment: format!("Step {step_idx} pure-exp softplus auxiliary"),
             });
+            extra_eqs.push(TaggedConstraint { comment: "Softplus domain".into(), formula: Formula::Cmp { op: CmpOp::Ge, lhs: Expr::var(&y_name), rhs: Expr::num(0.0) } });
             extra_eqs.push(TaggedConstraint {
                 comment: format!("Step {step_idx} softplus exp({y_name}) = 1 + exp(z)"),
                 formula: Formula::Cmp {
@@ -242,7 +224,10 @@ pub fn emit_smt2_with_logic(
     dialect: Dialect,
     logic_override: Option<&str>,
 ) -> Result<String, String> {
-    let logic = logic_override.unwrap_or("QF_NRA");
+    let logic = logic_override.unwrap_or(match (dialect, &sys.body) {
+        (Dialect::DrealOde, StampedBody::Ode { .. }) => "QF_NRA_ODE",
+        _ => "ALL",
+    });
     let mut out = String::with_capacity(8192);
     writeln!(
         out,
@@ -273,6 +258,9 @@ pub fn emit_smt2_with_logic(
         "; ============================================================================"
     )
     .unwrap();
+    if dialect == Dialect::DrealOde && matches!(sys.body, StampedBody::Algebraic { .. }) {
+        writeln!(out, "; DC input: static algebraic pass-through, no ODE flow.").unwrap();
+    }
     writeln!(out, "(set-logic {logic})").unwrap();
     writeln!(out, "(set-info :smt-lib-version 2.6)").unwrap();
     if let Some(exp) = sys.expected {
@@ -364,15 +352,9 @@ fn emit_algebraic_body(
     for v in vars {
         writeln!(out, "; {}", v.comment).unwrap();
         writeln!(out, "(declare-fun {} () Real)", v.name).unwrap();
-        writeln!(
-            out,
-            "(assert (and (>= {} {}) (<= {} {})))",
-            v.name,
-            format_smt2_real(v.lo),
-            v.name,
-            format_smt2_real(v.hi)
-        )
-        .unwrap();
+        if let Some((lo, hi)) = v.bounds {
+            writeln!(out, "(assert (and (>= {} {}) (<= {} {})))", v.name, format_smt2_real(lo), v.name, format_smt2_real(hi)).unwrap();
+        }
     }
     writeln!(out).unwrap();
 
@@ -382,6 +364,32 @@ fn emit_algebraic_body(
         writeln!(out, "(assert {})", emit_formula_smt2(&c.formula, false)?).unwrap();
     }
     writeln!(out).unwrap();
+
+    // Valid exponential lemmas, independent of the requested status. The bound
+    // (1 + 25/128)^128 >= 8e9 is checked by exact rational arithmetic in Lean's
+    // diode proof; monotonicity extends it to every argument >= 25.
+    fn exponential_args(e: &Expr, args: &mut std::collections::BTreeSet<String>) -> Result<(), String> {
+        match e {
+            Expr::Exp(a) => { args.insert(emit_expr_smt2(a, false)?); exponential_args(a,args)?; }
+            Expr::Neg(a) | Expr::Sqrt(a) | Expr::Ln1pExp(a) => exponential_args(a,args)?,
+            Expr::Add(a,b) | Expr::Sub(a,b) | Expr::Mul(a,b) | Expr::Div(a,b) => { exponential_args(a,args)?; exponential_args(b,args)?; }
+            _ => {}
+        }
+        Ok(())
+    }
+    fn formula_args(f: &Formula, args: &mut std::collections::BTreeSet<String>) -> Result<(), String> {
+        match f {
+            Formula::Cmp {lhs,rhs,..} => { exponential_args(lhs,args)?; exponential_args(rhs,args)?; }
+            Formula::And(fs) | Formula::Or(fs) => for f in fs { formula_args(f,args)?; },
+            Formula::Not(f) => formula_args(f,args)?,
+        }
+        Ok(())
+    }
+    let mut args = std::collections::BTreeSet::new();
+    for c in constraints { formula_args(&c.formula, &mut args)?; }
+    for arg in args {
+        writeln!(out, "(assert (=> (>= {arg} 25.0) (>= (exp {arg}) 8000000000.0)))").unwrap();
+    }
 
     writeln!(out, "; --- Negated Safety Specification (.unsafe) ---").unwrap();
     writeln!(out, "(assert {})", emit_formula_smt2(unsafe_formula, false)?).unwrap();
@@ -404,15 +412,9 @@ fn emit_discretized_ode_smt2(
         for v in static_vars {
             writeln!(out, "; {}", v.comment).unwrap();
             writeln!(out, "(declare-fun {} () Real)", v.name).unwrap();
-            writeln!(
-                out,
-                "(assert (and (>= {} {}) (<= {} {})))",
-                v.name,
-                format_smt2_real(v.lo),
-                v.name,
-                format_smt2_real(v.hi)
-            )
-            .unwrap();
+            if let Some((lo, hi)) = v.bounds {
+                writeln!(out, "(assert (and (>= {} {}) (<= {} {})))", v.name, format_smt2_real(lo), v.name, format_smt2_real(hi)).unwrap();
+            }
         }
         for c in static_constraints {
             writeln!(out, "; {}", c.comment).unwrap();
@@ -435,10 +437,11 @@ fn emit_discretized_ode_smt2(
     let mut step_vars_maps: Vec<BTreeMap<String, Expr>> = Vec::with_capacity(steps + 1);
     for k in 0..=steps {
         let mut map = BTreeMap::new();
-        for st in states {
+        for (i, st) in states.iter().enumerate() {
+            if i > 0 { out.push(' '); }
             let sk = format!("{}_s{k}", st.name);
-            writeln!(out, "(declare-fun {sk} () Real)").unwrap();
-            writeln!(
+            write!(out, "(declare-fun {sk} () Real) ").unwrap();
+            write!(
                 out,
                 "(assert (and (>= {sk} {}) (<= {sk} {})))",
                 format_smt2_real(st.lo),
@@ -447,6 +450,7 @@ fn emit_discretized_ode_smt2(
             .unwrap();
             map.insert(st.name.clone(), Expr::var(sk));
         }
+        writeln!(out).unwrap();
         step_vars_maps.push(map);
     }
     writeln!(out).unwrap();
@@ -472,15 +476,9 @@ fn emit_discretized_ode_smt2(
                 let low = lower_step_ln1p(&sub, 0, &mut aux_counter, &mut ev, &mut eq);
                 for v in ev {
                     writeln!(out, "(declare-fun {} () Real)", v.name).unwrap();
-                    writeln!(
-                        out,
-                        "(assert (and (>= {} {}) (<= {} {})))",
-                        v.name,
-                        format_smt2_real(v.lo),
-                        v.name,
-                        format_smt2_real(v.hi)
-                    )
-                    .unwrap();
+                    if let Some((lo, hi)) = v.bounds {
+                        writeln!(out, "(assert (and (>= {} {}) (<= {} {})))", v.name, format_smt2_real(lo), v.name, format_smt2_real(hi)).unwrap();
+                    }
                 }
                 for c in eq {
                     writeln!(out, "(assert {})", emit_formula_smt2(&c.formula, false)?).unwrap();
@@ -496,28 +494,31 @@ fn emit_discretized_ode_smt2(
     let mut extra_eqs: Vec<TaggedConstraint> = Vec::new();
     let mut step_eqs: Vec<(usize, String, Expr, Expr)> = Vec::new();
 
-    for k in 1..=steps {
+    let initial_unsafe = unsafe_formula.substitute(&step_vars_maps[0], &empty_nodes, Some(&Expr::num(0.0)));
+    unsafe_disjuncts.push(lower_step_formula_ln1p(
+        &initial_unsafe, 0, &mut aux_counter, &mut extra_vars, &mut extra_eqs,
+    ));
+    let first = if method == TranMethod::Trapezoidal { 0 } else { 1 };
+    for (k, map) in step_vars_maps.iter().enumerate().skip(first) {
+        for (i, st) in states.iter().enumerate() {
+            let name = format!("dx_{i}_s{k}");
+            let raw = st.rhs.substitute(map, &empty_nodes, Some(&Expr::num(k as f64 * dt)));
+            let rhs = lower_step_ln1p(&raw, k, &mut aux_counter, &mut extra_vars, &mut extra_eqs);
+            extra_vars.push(StampedVar { name: name.clone(), bounds: None, comment: "Step derivative".into() });
+            extra_eqs.push(TaggedConstraint { comment: "Step derivative definition".into(), formula: Formula::Cmp { op: CmpOp::Eq, lhs: Expr::var(name), rhs } });
+        }
+    }
+    for (k, map) in step_vars_maps.iter().enumerate().skip(1) {
         let tk = Expr::num((k as f64) * dt);
-        let tk_prev = Expr::num(((k - 1) as f64) * dt);
-        for st in states {
+        for (i, st) in states.iter().enumerate() {
             let xk = Expr::var(format!("{}_s{k}", st.name));
             let xk_prev = Expr::var(format!("{}_s{}", st.name, k - 1));
-            let fk_raw = st.rhs.substitute(&step_vars_maps[k], &empty_nodes, Some(&tk));
-            let fk = lower_step_ln1p(&fk_raw, k, &mut aux_counter, &mut extra_vars, &mut extra_eqs);
+            let fk = Expr::var(format!("dx_{i}_s{k}"));
 
             let rhs = match method {
                 TranMethod::BackwardEuler => Expr::add(xk_prev, Expr::mul(Expr::num(dt), fk)),
                 TranMethod::Trapezoidal => {
-                    let fk_prev_raw =
-                        st.rhs
-                            .substitute(&step_vars_maps[k - 1], &empty_nodes, Some(&tk_prev));
-                    let fk_prev = lower_step_ln1p(
-                        &fk_prev_raw,
-                        k,
-                        &mut aux_counter,
-                        &mut extra_vars,
-                        &mut extra_eqs,
-                    );
+                    let fk_prev = Expr::var(format!("dx_{i}_s{}", k - 1));
                     Expr::add(
                         xk_prev,
                         Expr::mul(Expr::num(0.5 * dt), Expr::add(fk_prev, fk)),
@@ -527,7 +528,7 @@ fn emit_discretized_ode_smt2(
             step_eqs.push((k, st.name.clone(), xk, rhs));
         }
 
-        let u_sub = unsafe_formula.substitute(&step_vars_maps[k], &empty_nodes, Some(&tk));
+        let u_sub = unsafe_formula.substitute(map, &empty_nodes, Some(&tk));
         let u_low = lower_step_formula_ln1p(
             &u_sub,
             k,
@@ -540,31 +541,29 @@ fn emit_discretized_ode_smt2(
 
     if !extra_vars.is_empty() {
         writeln!(out, "; --- Step-Local Transcendental Softplus Auxiliaries ---").unwrap();
+        // Each helper is emitted with its domain and defining equation. Helpers
+        // are created after their dependencies, so this is a topological order.
         for v in &extra_vars {
-            writeln!(out, "(declare-fun {} () Real)", v.name).unwrap();
-            writeln!(
-                out,
-                "(assert (and (>= {} {}) (<= {} {})))",
-                v.name,
-                format_smt2_real(v.lo),
-                v.name,
-                format_smt2_real(v.hi)
-            )
-            .unwrap();
-        }
-        for c in &extra_eqs {
-            writeln!(out, "(assert {})", emit_formula_smt2(&c.formula, false)?).unwrap();
+            write!(out, "(declare-fun {} () Real)", v.name).unwrap();
+            for c in &extra_eqs {
+                let Formula::Cmp { lhs, .. } = &c.formula else { continue; };
+                let owner = match lhs {
+                    Expr::Var(name) => Some(name),
+                    Expr::Exp(a) => if let Expr::Var(name) = a.as_ref() { Some(name) } else { None },
+                    Expr::Mul(a,b) if a == b => if let Expr::Var(name) = a.as_ref() { Some(name) } else { None },
+                    _ => None,
+                };
+                if owner == Some(&v.name) {
+                    write!(out, " (assert {})", emit_formula_smt2(&c.formula, false)?).unwrap();
+                }
+            }
+            writeln!(out).unwrap();
         }
         writeln!(out).unwrap();
     }
 
     writeln!(out, "; --- Discrete-Time Nonlinear DAE / ODE Step Equations ---").unwrap();
-    for (k, sname, lhs, rhs) in &step_eqs {
-        writeln!(
-            out,
-            "; Step {k}: {sname}"
-        )
-        .unwrap();
+    for (_, _, lhs, rhs) in &step_eqs {
         writeln!(
             out,
             "(assert (= {} {}))",
@@ -577,7 +576,7 @@ fn emit_discretized_ode_smt2(
 
     writeln!(
         out,
-        "; --- Existential Unsafe Trajectory Violation Across Steps 1..={steps} ---"
+        "; --- Existential Unsafe Trajectory Violation Across Steps 0..={steps} ---"
     )
     .unwrap();
     let any_unsafe = Formula::Or(unsafe_disjuncts);
@@ -598,15 +597,9 @@ fn emit_native_dreal_ode(
         for v in static_vars {
             writeln!(out, "; {}", v.comment).unwrap();
             writeln!(out, "(declare-fun {} () Real)", v.name).unwrap();
-            writeln!(
-                out,
-                "(assert (and (>= {} {}) (<= {} {})))",
-                v.name,
-                format_smt2_real(v.lo),
-                v.name,
-                format_smt2_real(v.hi)
-            )
-            .unwrap();
+            if let Some((lo, hi)) = v.bounds {
+                writeln!(out, "(assert (and (>= {} {}) (<= {} {})))", v.name, format_smt2_real(lo), v.name, format_smt2_real(hi)).unwrap();
+            }
         }
         for c in static_constraints {
             writeln!(out, "; {}", c.comment).unwrap();

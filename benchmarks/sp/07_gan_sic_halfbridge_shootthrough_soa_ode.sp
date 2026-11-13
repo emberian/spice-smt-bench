@@ -10,24 +10,21 @@
 .param vt   [0.025, 0.034]
 
 .bound v(g_ls) [-0.3, 3.0]
-.bound v(d_ls) [-0.5, 52.0]
+
 .init  v(g_ls) [0.0, 0.05]
-.init  v(d_ls) = 48.0
+
 
 * High-dv/dt 48V switching node + bus supply for low-side GaN eHEMT SOA check
-Vsw  sw  0 STEP(base=0.0 step=48.0 t0=6.0e-10 tau=3.5e-10)
-Vbus bus 0 DC 48.0
-
+Vsw  drive  0 STEP(base=0.0 step=48.0 t0=6.0e-10 tau=3.5e-10)
+Rcomm drive sw 0.5
 * Voltage-dependent AlGaN/GaN 2DEG depletion Miller capacitance C_gd(v_sw - v_g)
-C_MLCC_gd sw g_ls GAN_CGD_MILLER C0={cgd0} Cmin=3.5e-12 Vsat=8.0 ESR=0.0 ESL=0.0
+C_GD_gd sw g_ls GAN_CGD_MILLER C0={cgd0} Cmin=3.5e-12 Vsat=8.0 ESR=0.0 ESL=0.0
 Cgs       g_ls 0  680.0e-12
 Rpd       g_ls 0  {r_pd}
 
 * Low-side GaN eHEMT monitoring drain-to-source cross-conduction into sense load
-Rload bus  d_ls 2.0
-Cdpar d_ls 0    120.0e-12
-Mls   d_ls g_ls 0 0 GAN_EHEMT_100V W=1.0e-3 L=0.25e-6 Vt={vt}
-
+Cdpar sw 0 120p
+Mls sw g_ls 0 0 GAN_EHEMT_100V W=1m L=0.25u Vt={vt}
 * Unsafe if Miller bounce approaches eHEMT threshold (1.45V): guard at 1.20 V
-.unsafe v(g_ls) > 1.20
+.unsafe v(g_ls) > 1.20 || i_Mls > 0.5 || i_Mls * v(sw) > 20.0
 .end

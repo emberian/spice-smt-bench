@@ -4,7 +4,7 @@
 ; Dialect   : smt2-exp (QF_NRA + transcendental exp)
 ; Generator : spice2smt (zero-dependency SPICE / Multi-PDK / PCB / TCAD compiler)
 ; ============================================================================
-(set-logic QF_NRA)
+(set-logic ALL)
 (set-info :smt-lib-version 2.6)
 (set-info :status unsat)
 
@@ -32,12 +32,13 @@
 ; Voltage source constitutive equation (Vdd)
 (assert (= v_in v_sup))
 ; Shockley diode law (D1)
-(assert (= i_D1 (* (/ 1.0 1000000000000.0) (- (exp (/ v_out (* 1.05 vt))) 1.0))))
+(assert (= i_D1 (* 0.000000000001 (- (exp (/ v_out (* 1.05 vt))) 1.0))))
 ; MNA Kirchhoff Current Law at node `in`
 (assert (= (+ i_Vdd (/ (- v_in v_out) 1000.0)) 0.0))
 ; MNA Kirchhoff Current Law at node `out`
 (assert (= (+ (+ (- (/ (- v_in v_out) 1000.0)) (/ v_out 10000.0)) i_D1) 0.0))
 
+(assert (=> (>= (/ v_out (* 1.05 vt)) 25.0) (>= (exp (/ v_out (* 1.05 vt))) 8000000000.0)))
 ; --- Negated Safety Specification (.unsafe) ---
 (assert (> v_out 0.85))
 

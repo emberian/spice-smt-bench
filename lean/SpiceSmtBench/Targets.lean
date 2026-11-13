@@ -1,6 +1,7 @@
 import SpiceSmtBench.PhysicsModels
 import SpiceSmtBench.IntervalCheck
 import SpiceSmtBench.TargetsGenerated
+import SpiceSmtBench.PcbCertificate
 
 /-!
 # Benchmark Target Specifications & Machine-Checked Proofs
@@ -12,10 +13,11 @@ from `SpiceSmtBench.TargetsGenerated` and provides complete end-to-end machine-c
    (`Bench_01_diode_clipper_pvt`) across the continuous 2D PVT box `v_sup ∈ [3.0, 3.6] V ×
    vt ∈ [23.5 mV, 32.2 mV]` using rational scaling-and-squaring (`m = 7`, `2^7 = 128`) from
    `IntervalCheck.exp_ge_qrat_iterSq`!
-2. `unguarded_bandgap_zero_current_trojan`: Proves analytically over `TranscendentalField R`
-   that an unguarded self-biased bandgap network admits the zero-current analog Trojan equilibrium
-   `v_ref = 0` (`Bench_04a` physical mechanism), whereas a positive startup pull-up strictly
-   forbids `v_ref = 0` (`Bench_04b` physical mechanism).
+2. `bench01_paving_certificate_proved`: a concrete two-leaf rational replay.
+3. `bench06_rc_diode_glitch_filter_proved`: a checked backward-Euler barrier.
+4. `bench09a_pcb_microstrip_dfm_proved`: a 23-box forward-bound certificate.
+5. Guarded/unguarded bandgap zero-current component lemmas. These do not
+   instantiate either generated bandgap target.
 -/
 
 namespace SpiceSmtBench.Targets
@@ -179,11 +181,8 @@ theorem bench01_diode_clipper_pvt_proved {R : Type} (TF : TranscendentalField R)
     (TF.ofRat_le_iff 17 0 4000 1 (by decide) (by decide)).mp h_lhs_ge
   omega
 
-/-- Unguarded Bandgap Zero-Current Analog Trojan Lemma (`Bench_04a` vs `Bench_04b` Mechanism):
-    1. Without a startup pull-up, `v_ref = 0` satisfies the zero-current resistor + Shockley diode
-       equilibrium `v_ref / R_bleed + I_s * (exp(v_ref / V_T) - 1) = 0`.
-    2. Adding a startup pull-up `(v_ref - v_dd) / R_start` with `v_dd > 0` and `R_start > 0`
-       strictly refutes the zero-current Trojan state `v_ref = 0`! -/
+/-- Zero voltage satisfies the resistor/diode zero-current identity.
+    This is a component lemma, not a theorem about the generated bandgap decks. -/
 theorem unguarded_bandgap_zero_current_trojan {R : Type} (TF : TranscendentalField R)
     (i_s r_bleed vt : R)
     (hr : TF.lt TF.zero r_bleed)
@@ -196,5 +195,198 @@ theorem unguarded_bandgap_zero_current_trojan {R : Type} (TF : TranscendentalFie
   rw [PhysicsModels.shockley_zero_bias TF i_s TF.one vt h1vt]
   rw [TF.div_zero_num r_bleed hr]
   exact TF.add_zero TF.zero
+
+private def diodeResidual : PExpr :=
+  .add (.add (.neg (.div (.sub (.var 0) (.var 2)) (.const ⟨1000, 1, by decide⟩)))
+    (.div (.var 2) (.const ⟨10000, 1, by decide⟩)))
+    (.mul (.const ⟨1, 1000000000000, by decide⟩)
+      (.sub (.exp (.div (.var 2) (.mul (.const ⟨21, 20, by decide⟩) (.var 1)))) (.const QRat.one)))
+
+private def diodeConstraints : List PConstraint :=
+  [(.gtZero, .sub (.var 2) (.const ⟨17, 20, by decide⟩)), (.eqZero, diodeResidual)]
+
+private def diodeBox : List QInterval :=
+  [⟨⟨3, 1, by decide⟩, ⟨18, 5, by decide⟩⟩, ⟨⟨47, 2000, by decide⟩, ⟨161, 5000, by decide⟩⟩, ⟨⟨-1, 2, by decide⟩, ⟨18, 5, by decide⟩⟩]
+
+private def diodeTree : PavingTree := .split 2 ⟨17, 20, by decide⟩ (.leaf 0) (.leaf 1)
+
+set_option maxRecDepth 10000 in
+set_option maxHeartbeats 2000000 in
+private theorem diodeReplay : verifyPaving (checkConcreteLeaf diodeConstraints) diodeTree diodeBox = true := by
+  decide
+
+/-- Concrete two-leaf rational interval replay of the generated diode target. -/
+theorem bench01_paving_certificate_proved {R : Type} (TF : TranscendentalField R) :
+    Bench_01_diode_clipper_pvt TF := by
+  intro vs vt vin iV vo iD hb hp hu
+  let env : Nat → R := fun i => if i = 0 then vin else if i = 1 then vt else vo
+  have hm : memBox TF diodeBox env := by
+    rcases hb with ⟨_, hvt, hvin, _, hvo, _⟩
+    exact ⟨⟨by simpa only [QRat.eval, TF.ofInt_eq_ofRat, env, ↓reduceIte] using hvin.1, hvin.2⟩, hvt, hvo, trivial⟩
+  have active : holdsConstraints TF diodeConstraints env := by
+    intro c hc
+    simp only [diodeConstraints, List.mem_cons, List.not_mem_nil, or_false] at hc
+    cases hc with
+    | inl hc =>
+      subst c
+      change TF.lt TF.zero (TF.sub vo (TF.ofRat 17 20))
+      obtain ⟨hle, hnot⟩ := (TF.lt_iff_le_not_le _ _).mp hu
+      apply (TF.lt_iff_le_not_le _ _).mpr
+      constructor
+      · have h := TF.sub_le_sub _ _ (TF.ofRat 17 20) (TF.ofRat 17 20) hle (TF.le_refl _)
+        simpa only [TF.sub_self] using h
+      · intro h
+        have h' := TF.add_le_add _ _ (TF.ofRat 17 20) (TF.ofRat 17 20) h (TF.le_refl _)
+        have hn : TF.add (TF.neg (TF.ofRat 17 20)) (TF.ofRat 17 20) = TF.zero := by rw [TF.add_comm, TF.add_neg_self]
+        exact hnot (by simpa only [TF.sub_eq_add_neg, TF.add_assoc, hn, TF.add_zero, TF.zero_add] using h')
+    | inr hc =>
+      subst c
+      rcases hp with ⟨_, hd, _, hk⟩
+      rw [hd] at hk
+      simpa [PCmp.holds, diodeResidual, PExpr.eval, QRat.eval, QRat.one,
+        env, TF.ofInt_eq_ofRat, TF.one_eq_ofRat] using hk
+  exact paving_unsat_sound TF (holdsConstraints TF diodeConstraints) (checkConcreteLeaf diodeConstraints)
+    (checkConcreteLeaf_sound TF diodeConstraints) diodeTree diodeBox env diodeReplay hm active
+
+/-- Positive startup injection makes the zero-voltage resistor/diode KCL impossible.
+    This is a component theorem, independent of the generated bandgap circuit. -/
+theorem guarded_bandgap_startup_refutes_zero_current {R : Type} (TF : TranscendentalField R)
+    (i_s r_bleed vt startup : R) (hr : TF.lt TF.zero r_bleed)
+    (hvt : TF.lt TF.zero vt) (hstart : TF.lt TF.zero startup) :
+    ¬ (TF.sub (TF.add (TF.div TF.zero r_bleed)
+      (PhysicsModels.shockleyDiodeCurrent TF i_s TF.one vt TF.zero)) startup = TF.zero) := by
+  rw [unguarded_bandgap_zero_current_trojan TF i_s r_bleed vt hr hvt,
+    TF.sub_eq_add_neg, TF.zero_add]
+  intro h
+  have he := congrArg (fun z => TF.add startup z) h
+  have hs : TF.zero = startup := by simpa only [TF.add_neg_self, TF.add_zero] using he
+  exact ((TF.lt_iff_le_not_le _ _).mp hstart).2 (hs ▸ TF.le_refl TF.zero)
+
+private def filterSlope : PExpr :=
+  let z := PExpr.div (.sub (.var 4) (.const ⟨1,4000000000,by decide⟩)) (.const ⟨9,50000000000,by decide⟩)
+  .div (.sub (.sub (.mul (.var 0) (.exp (.neg (.mul z z)))) (.div (.var 3) (.const ⟨2500,1,by decide⟩)))
+    (.mul (.const ⟨3,2500000000000,by decide⟩) (.sub (.exp (.div (.var 3) (.mul (.const ⟨21,20,by decide⟩) (.var 1)))) (.const QRat.one))))
+    (.const ⟨1,125000000000,by decide⟩)
+
+private def filterStepConstraints : List PConstraint :=
+  [(.eqZero, .sub (.var 3) (.add (.var 2) (.mul (.const ⟨1,10000000000,by decide⟩) filterSlope)))]
+
+private def filterStepBox : List QInterval :=
+  [⟨QRat.zero, ⟨7,200,by decide⟩⟩,
+   ⟨⟨3,125,by decide⟩, ⟨31,1000,by decide⟩⟩,
+   ⟨⟨-1,5,by decide⟩, QRat.one⟩,
+   ⟨QRat.one, ⟨2,1,by decide⟩⟩,
+   ⟨QRat.zero, ⟨3,5000000000,by decide⟩⟩]
+
+set_option maxRecDepth 10000 in
+set_option maxHeartbeats 2000000 in
+private theorem filterStepReplay : checkConcreteLeaf filterStepConstraints 0 filterStepBox = true := by decide
+
+/-- A rational barrier certificate proves every backward-Euler sample of 06 safe. -/
+theorem bench06_rc_diode_glitch_filter_proved {R : Type} (TF : TranscendentalField R) :
+    Bench_06_rc_diode_glitch_filter_ode TF := by
+  intro ip vt state
+  dsimp only
+  intro hb hp hu
+  rcases hb with ⟨hip, hvt, hs⟩
+  rcases hp with ⟨hi, hstep⟩
+  have guard : ∀ k, k ≤ 6 → TF.le (state k 0) TF.one := by
+    intro k hk
+    induction k with
+    | zero =>
+      apply TF.le_trans _ _ _ hi.2
+      rw [TF.one_eq_ofRat]
+      exact (TF.ofRat_le_iff 1 1 20 1 (by decide) (by decide)).mpr (by decide)
+    | succ k ih =>
+      have hk' : k ≤ 6 := by omega
+      have hk6 : k < 6 := by omega
+      cases TF.le_total (state (k+1) 0) TF.one with
+      | inl h => exact h
+      | inr h =>
+        let t : R := ([TF.zero, TF.ofRat 1 10000000000, TF.ofRat 1 5000000000,
+          TF.ofRat 3 10000000000, TF.ofRat 1 2500000000, TF.ofRat 1 2000000000,
+          TF.ofRat 3 5000000000] : List R).getD (k+1) TF.zero
+        have ht : TF.le TF.zero t ∧ TF.le t (TF.ofRat 3 5000000000) := by
+          have casesK : k = 0 ∨ k = 1 ∨ k = 2 ∨ k = 3 ∨ k = 4 ∨ k = 5 := by omega
+          rcases casesK with h | h | h | h | h | h <;> subst k <;>
+            simp only [t, List.getD, List.getElem?_cons_succ, List.getElem?_cons_zero, Option.getD_some] <;>
+            constructor <;> (try rw [TF.zero_eq_ofRat]) <;>
+            apply (TF.ofRat_le_iff _ _ _ _ (by decide) (by decide)).mpr <;> decide
+        let env : Nat → R := fun i => ([ip, vt, state k 0, state (k+1) 0, t] : List R).getD i TF.zero
+        have hm : memBox TF filterStepBox env := by
+          change (TF.le (QRat.eval TF QRat.zero) ip ∧ TF.le ip (TF.ofRat 7 200)) ∧
+            (TF.le (TF.ofRat 3 125) vt ∧ TF.le vt (TF.ofRat 31 1000)) ∧
+            (TF.le (TF.ofRat (-1) 5) (state k 0) ∧ TF.le (state k 0) (QRat.eval TF QRat.one)) ∧
+            (TF.le (QRat.eval TF QRat.one) (state (k+1) 0) ∧ TF.le (state (k+1) 0) (TF.ofRat 2 1)) ∧
+            (TF.le (QRat.eval TF QRat.zero) t ∧ TF.le t (TF.ofRat 3 5000000000)) ∧ True
+          rw [QRat.eval_zero, QRat.eval_one, ← TF.ofInt_eq_ofRat 2]
+          exact ⟨hip, hvt, ⟨(hs k hk').1, ih hk'⟩, ⟨h, (hs (k+1) hk).2⟩, ht, trivial⟩
+        have hc : holdsConstraints TF filterStepConstraints env := by
+          intro c hc
+          simp only [filterStepConstraints, List.mem_singleton] at hc
+          subst c
+          have he := hstep k hk6
+          change state (k+1) 0 = _ at he
+          change TF.sub (state (k+1) 0) _ = TF.zero
+          have hv : (PExpr.add (.var 2) (.mul (.const ⟨1,10000000000,by decide⟩) filterSlope)).eval TF env = state (k+1) 0 := by
+            simpa [PExpr.eval, filterSlope, QRat.eval, QRat.one, env, t,
+              TF.one_eq_ofRat, TF.ofInt_eq_ofRat] using he.symm
+          change TF.sub (state (k+1) 0) ((PExpr.add (.var 2) (.mul (.const ⟨1,10000000000,by decide⟩) filterSlope)).eval TF env) = TF.zero
+          rw [hv, TF.sub_self]
+        exact False.elim (checkConcreteLeaf_sound TF filterStepConstraints 0 filterStepBox env filterStepReplay hm hc)
+  obtain ⟨k, hk, hu⟩ := hu
+  have h := TF.le_trans _ _ _ hu (guard k hk)
+  rw [TF.one_eq_ofRat] at h
+  have hn := (TF.ofRat_le_iff 11 1 10 1 (by decide) (by decide)).mp h
+  contradiction
+
+-- BEGIN GENERATED PCB BRIDGE
+/-- Full continuous manufacturing-box proof by checked forward bounds and paving. -/
+theorem bench09a_pcb_microstrip_dfm_proved {R : Type} (TF : TranscendentalField R) :
+    Bench_09a_pcb_microstrip_dfm_unsat TF := by
+  intro dw_etch ds_etch dh_lam t_cu er_lam v_tx i_Vdrv v_tx_p i_Vdp v_tx_n i_Vdn v_rx thickness_log_tl50 su_tl50 eeff_tl50 seeff_tl50 lnz_tl50 Z0_tl50 wide_log_tl50 Ltot_tl50 Ctot_tl50 Rdc_tl50 v_rx_p v_rx_n thickness_log_diff90_p su_diff90_p eeff_diff90_p seeff_diff90_p lnz_diff90_p Z0_diff90_p wide_log_diff90_p Ltot_diff90_p Ctot_diff90_p Rdc_diff90_p thickness_log_diff90_n su_diff90_n eeff_diff90_n seeff_diff90_n lnz_diff90_n Z0_diff90_n wide_log_diff90_n Ltot_diff90_n Ctot_diff90_n Rdc_diff90_n kc_diff90 Zdiff_diff90 odd_factor_diff90 Cm_diff90 Lm_diff90 hb hp hu
+  rcases hp with ⟨⟨⟨h0, h1, h2, h3, h4, h5, h6, h7, h8, h9, h10, h11, h12, h13, h14⟩, ⟨h15, h16, h17, h18, h19, h20, h21, h22, h23, h24, h25, h26, h27, h28, h29, h30⟩⟩, ⟨⟨h31, h32, h33, h34, h35, h36, h37, h38, h39, h40, h41, h42, h43, h44, h45, h46⟩, ⟨h47, h48, h49, h50, h51, h52, h53, h54, h55, h56, h57, h58, h59, h60, h61, h62⟩⟩⟩
+  let env : Nat → R := fun i => ([dw_etch, ds_etch, dh_lam, t_cu, er_lam, thickness_log_tl50, su_tl50, eeff_tl50, seeff_tl50, wide_log_tl50, Z0_tl50, thickness_log_diff90_n, su_diff90_n, eeff_diff90_n, seeff_diff90_n, wide_log_diff90_n, Z0_diff90_n, thickness_log_diff90_p, su_diff90_p, eeff_diff90_p, seeff_diff90_p, wide_log_diff90_p, Z0_diff90_p, kc_diff90, odd_factor_diff90, Zdiff_diff90] : List R).getD i TF.zero
+  have hd : holdsDefinitions TF env 5 pcbDefinitions := by
+    change (PDefinition.holds TF env 5 ⟨.logarithm, (.div (.mul (.const ⟨2, 1, by decide⟩) (.add (.const ⟨1, 10000, by decide⟩) (.var 2))) (.var 3))⟩) ∧ (PDefinition.holds TF env 6 ⟨.squareRoot, (.add (.const ⟨1, 1, by decide⟩) (.div (.const ⟨12, 1, by decide⟩) (.div (.add (.add (.const ⟨9, 50000, by decide⟩) (.var 0)) (.mul (.div (.var 3) (.const ⟨3141592653589793, 1000000000000000, by decide⟩)) (.add (.const ⟨1, 1, by decide⟩) (.var 5)))) (.add (.const ⟨1, 10000, by decide⟩) (.var 2)))))⟩) ∧ (PDefinition.holds TF env 7 ⟨.direct, (.add (.div (.add (.var 4) (.const ⟨1, 1, by decide⟩)) (.const ⟨2, 1, by decide⟩)) (.div (.sub (.var 4) (.const ⟨1, 1, by decide⟩)) (.mul (.const ⟨2, 1, by decide⟩) (.var 6))))⟩) ∧ (PDefinition.holds TF env 8 ⟨.squareRoot, (.var 7)⟩) ∧ (PDefinition.holds TF env 9 ⟨.logarithm, (.add (.div (.add (.add (.const ⟨9, 50000, by decide⟩) (.var 0)) (.mul (.div (.var 3) (.const ⟨3141592653589793, 1000000000000000, by decide⟩)) (.add (.const ⟨1, 1, by decide⟩) (.var 5)))) (.add (.const ⟨1, 10000, by decide⟩) (.var 2))) (.const ⟨361, 250, by decide⟩))⟩) ∧ (PDefinition.holds TF env 10 ⟨.direct, (.div (.const ⟨7539822368615503, 20000000000000, by decide⟩) (.mul (.var 8) (.add (.add (.div (.add (.add (.const ⟨9, 50000, by decide⟩) (.var 0)) (.mul (.div (.var 3) (.const ⟨3141592653589793, 1000000000000000, by decide⟩)) (.add (.const ⟨1, 1, by decide⟩) (.var 5)))) (.add (.const ⟨1, 10000, by decide⟩) (.var 2))) (.const ⟨1393, 1000, by decide⟩)) (.mul (.const ⟨667, 1000, by decide⟩) (.var 9)))))⟩) ∧ (PDefinition.holds TF env 11 ⟨.logarithm, (.div (.mul (.const ⟨2, 1, by decide⟩) (.add (.const ⟨1, 10000, by decide⟩) (.var 2))) (.var 3))⟩) ∧ (PDefinition.holds TF env 12 ⟨.squareRoot, (.add (.const ⟨1, 1, by decide⟩) (.div (.const ⟨12, 1, by decide⟩) (.div (.add (.add (.const ⟨17, 100000, by decide⟩) (.var 0)) (.mul (.div (.var 3) (.const ⟨3141592653589793, 1000000000000000, by decide⟩)) (.add (.const ⟨1, 1, by decide⟩) (.var 11)))) (.add (.const ⟨1, 10000, by decide⟩) (.var 2)))))⟩) ∧ (PDefinition.holds TF env 13 ⟨.direct, (.add (.div (.add (.var 4) (.const ⟨1, 1, by decide⟩)) (.const ⟨2, 1, by decide⟩)) (.div (.sub (.var 4) (.const ⟨1, 1, by decide⟩)) (.mul (.const ⟨2, 1, by decide⟩) (.var 12))))⟩) ∧ (PDefinition.holds TF env 14 ⟨.squareRoot, (.var 13)⟩) ∧ (PDefinition.holds TF env 15 ⟨.logarithm, (.add (.div (.add (.add (.const ⟨17, 100000, by decide⟩) (.var 0)) (.mul (.div (.var 3) (.const ⟨3141592653589793, 1000000000000000, by decide⟩)) (.add (.const ⟨1, 1, by decide⟩) (.var 11)))) (.add (.const ⟨1, 10000, by decide⟩) (.var 2))) (.const ⟨361, 250, by decide⟩))⟩) ∧ (PDefinition.holds TF env 16 ⟨.direct, (.div (.const ⟨7539822368615503, 20000000000000, by decide⟩) (.mul (.var 14) (.add (.add (.div (.add (.add (.const ⟨17, 100000, by decide⟩) (.var 0)) (.mul (.div (.var 3) (.const ⟨3141592653589793, 1000000000000000, by decide⟩)) (.add (.const ⟨1, 1, by decide⟩) (.var 11)))) (.add (.const ⟨1, 10000, by decide⟩) (.var 2))) (.const ⟨1393, 1000, by decide⟩)) (.mul (.const ⟨667, 1000, by decide⟩) (.var 15)))))⟩) ∧ (PDefinition.holds TF env 17 ⟨.logarithm, (.div (.mul (.const ⟨2, 1, by decide⟩) (.add (.const ⟨1, 10000, by decide⟩) (.var 2))) (.var 3))⟩) ∧ (PDefinition.holds TF env 18 ⟨.squareRoot, (.add (.const ⟨1, 1, by decide⟩) (.div (.const ⟨12, 1, by decide⟩) (.div (.add (.add (.const ⟨17, 100000, by decide⟩) (.var 0)) (.mul (.div (.var 3) (.const ⟨3141592653589793, 1000000000000000, by decide⟩)) (.add (.const ⟨1, 1, by decide⟩) (.var 17)))) (.add (.const ⟨1, 10000, by decide⟩) (.var 2)))))⟩) ∧ (PDefinition.holds TF env 19 ⟨.direct, (.add (.div (.add (.var 4) (.const ⟨1, 1, by decide⟩)) (.const ⟨2, 1, by decide⟩)) (.div (.sub (.var 4) (.const ⟨1, 1, by decide⟩)) (.mul (.const ⟨2, 1, by decide⟩) (.var 18))))⟩) ∧ (PDefinition.holds TF env 20 ⟨.squareRoot, (.var 19)⟩) ∧ (PDefinition.holds TF env 21 ⟨.logarithm, (.add (.div (.add (.add (.const ⟨17, 100000, by decide⟩) (.var 0)) (.mul (.div (.var 3) (.const ⟨3141592653589793, 1000000000000000, by decide⟩)) (.add (.const ⟨1, 1, by decide⟩) (.var 17)))) (.add (.const ⟨1, 10000, by decide⟩) (.var 2))) (.const ⟨361, 250, by decide⟩))⟩) ∧ (PDefinition.holds TF env 22 ⟨.direct, (.div (.const ⟨7539822368615503, 20000000000000, by decide⟩) (.mul (.var 20) (.add (.add (.div (.add (.add (.const ⟨17, 100000, by decide⟩) (.var 0)) (.mul (.div (.var 3) (.const ⟨3141592653589793, 1000000000000000, by decide⟩)) (.add (.const ⟨1, 1, by decide⟩) (.var 17)))) (.add (.const ⟨1, 10000, by decide⟩) (.var 2))) (.const ⟨1393, 1000, by decide⟩)) (.mul (.const ⟨667, 1000, by decide⟩) (.var 21)))))⟩) ∧ (PDefinition.holds TF env 23 ⟨.direct, (.exp (.neg (.div (.mul (.const ⟨19, 10, by decide⟩) (.add (.const ⟨9, 50000, by decide⟩) (.var 1))) (.add (.const ⟨1, 10000, by decide⟩) (.var 2)))))⟩) ∧ (PDefinition.holds TF env 24 ⟨.squareRoot, (.div (.sub (.const ⟨1, 1, by decide⟩) (.var 23)) (.add (.const ⟨1, 1, by decide⟩) (.var 23)))⟩) ∧ (PDefinition.holds TF env 25 ⟨.direct, (.mul (.add (.var 22) (.var 16)) (.var 24))⟩) ∧ True
+    refine ⟨?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, trivial⟩
+    · simpa only [PDefinition.holds, PExpr.eval, QRat.eval, env, List.getD, List.getElem?_cons_succ, List.getElem?_cons_zero, Option.getD_some, TF.zero_eq_ofRat, TF.one_eq_ofRat, TF.ofInt_eq_ofRat] using (h7)
+    · simpa only [PDefinition.holds, PExpr.eval, QRat.eval, env, List.getD, List.getElem?_cons_succ, List.getElem?_cons_zero, Option.getD_some, TF.zero_eq_ofRat, TF.one_eq_ofRat, TF.ofInt_eq_ofRat] using (And.intro h8 h9)
+    · simpa only [PDefinition.holds, PExpr.eval, QRat.eval, env, List.getD, List.getElem?_cons_succ, List.getElem?_cons_zero, Option.getD_some, TF.zero_eq_ofRat, TF.one_eq_ofRat, TF.ofInt_eq_ofRat] using (h10)
+    · simpa only [PDefinition.holds, PExpr.eval, QRat.eval, env, List.getD, List.getElem?_cons_succ, List.getElem?_cons_zero, Option.getD_some, TF.zero_eq_ofRat, TF.one_eq_ofRat, TF.ofInt_eq_ofRat] using (And.intro h11 h12)
+    · simpa only [PDefinition.holds, PExpr.eval, QRat.eval, env, List.getD, List.getElem?_cons_succ, List.getElem?_cons_zero, Option.getD_some, TF.zero_eq_ofRat, TF.one_eq_ofRat, TF.ofInt_eq_ofRat] using (h14)
+    · simpa only [PDefinition.holds, PExpr.eval, QRat.eval, env, List.getD, List.getElem?_cons_succ, List.getElem?_cons_zero, Option.getD_some, TF.zero_eq_ofRat, TF.one_eq_ofRat, TF.ofInt_eq_ofRat] using (h15)
+    · simpa only [PDefinition.holds, PExpr.eval, QRat.eval, env, List.getD, List.getElem?_cons_succ, List.getElem?_cons_zero, Option.getD_some, TF.zero_eq_ofRat, TF.one_eq_ofRat, TF.ofInt_eq_ofRat] using (h39)
+    · simpa only [PDefinition.holds, PExpr.eval, QRat.eval, env, List.getD, List.getElem?_cons_succ, List.getElem?_cons_zero, Option.getD_some, TF.zero_eq_ofRat, TF.one_eq_ofRat, TF.ofInt_eq_ofRat] using (And.intro h40 h41)
+    · simpa only [PDefinition.holds, PExpr.eval, QRat.eval, env, List.getD, List.getElem?_cons_succ, List.getElem?_cons_zero, Option.getD_some, TF.zero_eq_ofRat, TF.one_eq_ofRat, TF.ofInt_eq_ofRat] using (h42)
+    · simpa only [PDefinition.holds, PExpr.eval, QRat.eval, env, List.getD, List.getElem?_cons_succ, List.getElem?_cons_zero, Option.getD_some, TF.zero_eq_ofRat, TF.one_eq_ofRat, TF.ofInt_eq_ofRat] using (And.intro h43 h44)
+    · simpa only [PDefinition.holds, PExpr.eval, QRat.eval, env, List.getD, List.getElem?_cons_succ, List.getElem?_cons_zero, Option.getD_some, TF.zero_eq_ofRat, TF.one_eq_ofRat, TF.ofInt_eq_ofRat] using (h46)
+    · simpa only [PDefinition.holds, PExpr.eval, QRat.eval, env, List.getD, List.getElem?_cons_succ, List.getElem?_cons_zero, Option.getD_some, TF.zero_eq_ofRat, TF.one_eq_ofRat, TF.ofInt_eq_ofRat] using (h47)
+    · simpa only [PDefinition.holds, PExpr.eval, QRat.eval, env, List.getD, List.getElem?_cons_succ, List.getElem?_cons_zero, Option.getD_some, TF.zero_eq_ofRat, TF.one_eq_ofRat, TF.ofInt_eq_ofRat] using (h23)
+    · simpa only [PDefinition.holds, PExpr.eval, QRat.eval, env, List.getD, List.getElem?_cons_succ, List.getElem?_cons_zero, Option.getD_some, TF.zero_eq_ofRat, TF.one_eq_ofRat, TF.ofInt_eq_ofRat] using (And.intro h24 h25)
+    · simpa only [PDefinition.holds, PExpr.eval, QRat.eval, env, List.getD, List.getElem?_cons_succ, List.getElem?_cons_zero, Option.getD_some, TF.zero_eq_ofRat, TF.one_eq_ofRat, TF.ofInt_eq_ofRat] using (h26)
+    · simpa only [PDefinition.holds, PExpr.eval, QRat.eval, env, List.getD, List.getElem?_cons_succ, List.getElem?_cons_zero, Option.getD_some, TF.zero_eq_ofRat, TF.one_eq_ofRat, TF.ofInt_eq_ofRat] using (And.intro h27 h28)
+    · simpa only [PDefinition.holds, PExpr.eval, QRat.eval, env, List.getD, List.getElem?_cons_succ, List.getElem?_cons_zero, Option.getD_some, TF.zero_eq_ofRat, TF.one_eq_ofRat, TF.ofInt_eq_ofRat] using (h30)
+    · simpa only [PDefinition.holds, PExpr.eval, QRat.eval, env, List.getD, List.getElem?_cons_succ, List.getElem?_cons_zero, Option.getD_some, TF.zero_eq_ofRat, TF.one_eq_ofRat, TF.ofInt_eq_ofRat] using (h31)
+    · simpa only [PDefinition.holds, PExpr.eval, QRat.eval, env, List.getD, List.getElem?_cons_succ, List.getElem?_cons_zero, Option.getD_some, TF.zero_eq_ofRat, TF.one_eq_ofRat, TF.ofInt_eq_ofRat] using (h51)
+    · simpa only [PDefinition.holds, PExpr.eval, QRat.eval, env, List.getD, List.getElem?_cons_succ, List.getElem?_cons_zero, Option.getD_some, TF.zero_eq_ofRat, TF.one_eq_ofRat, TF.ofInt_eq_ofRat] using (And.intro h52 h53)
+    · simpa only [PDefinition.holds, PExpr.eval, QRat.eval, env, List.getD, List.getElem?_cons_succ, List.getElem?_cons_zero, Option.getD_some, TF.zero_eq_ofRat, TF.one_eq_ofRat, TF.ofInt_eq_ofRat] using (h54)
+  have hm : memBox TF pcbRoot env := by
+    rcases hb with ⟨p0, p1, p2, p3, p4, _⟩
+    simpa only [memBox, pcbRoot, memInterval, QRat.eval, env, List.getD, List.getElem?_cons_succ, List.getElem?_cons_zero, Option.getD_some] using (And.intro p0 (And.intro p1 (And.intro p2 (And.intro p3 (And.intro p4 True.intro)))))
+  have hn : ¬ holdsRanges TF env pcbRanges := by
+    intro hr
+    change (TF.le (TF.ofRat 45 1) Z0_tl50 ∧ TF.le Z0_tl50 (TF.ofRat 55 1)) ∧ (TF.le (TF.ofRat 90 1) Zdiff_diff90 ∧ TF.le Zdiff_diff90 (TF.ofRat 110 1)) ∧ True at hr
+    simp only [TF.ofInt_eq_ofRat] at hu
+    rcases hu with h | h | h | h
+    · exact ((TF.lt_iff_le_not_le _ _).mp h).2 hr.1.1
+    · exact ((TF.lt_iff_le_not_le _ _).mp h).2 hr.1.2
+    · exact ((TF.lt_iff_le_not_le _ _).mp h).2 hr.2.1.1
+    · exact ((TF.lt_iff_le_not_le _ _).mp h).2 hr.2.1.2
+  exact paving_unsat_sound TF (fun env => holdsDefinitions TF env 5 pcbDefinitions ∧ ¬ holdsRanges TF env pcbRanges)
+    (checkForwardLeaf 5 pcbDefinitions pcbRanges pcbCertificates)
+    (checkForwardLeaf_sound TF 5 pcbDefinitions pcbRanges pcbCertificates)
+    pcbTree pcbRoot env pcbReplay hm ⟨hd, hn⟩
+-- END GENERATED PCB BRIDGE
 
 end SpiceSmtBench.Targets
