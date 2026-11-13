@@ -1,0 +1,10 @@
+# Rust build artifacts
+/target/
+
+# Lean 4 build artifacts
+/lean/.lake/
+
+# OS / editor clutter
+.DS_Store
+*.swp
+*~

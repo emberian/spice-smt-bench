@@ -1,0 +1,970 @@
+use std::collections::BTreeMap;
+use std::fs;
+use std::path::PathBuf;
+
+use spice2smt::ast::{CmpOp, Dialect, ExpectedStatus, Expr, Formula, InitSpec, TranMethod};
+use spice2smt::pdk::PdkId;
+use spice2smt::stamp::{StampedBody, StampedSystem};
+use spice2smt::{compile_str, parser, paving, stamp};
+
+fn repo_root() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+}
+
+fn check_balanced_parens(smt2: &str, label: &str) {
+    let mut depth = 0i64;
+    for line in smt2.lines() {
+        let code = match line.find(';') {
+            Some(idx) => &line[..idx],
+            None => line,
+        };
+        for ch in code.chars() {
+            match ch {
+                '(' => depth += 1,
+                ')' => {
+                    depth -= 1;
+                    assert!(depth >= 0, "unbalanced `)` in {label}");
+                }
+                _ => {}
+            }
+        }
+    }
+    assert_eq!(depth, 0, "unclosed `(` in {label}");
+}
+
+#[test]
+fn test_all_pdk_profiles_load() {
+    assert_eq!(PdkId::all().len(), 6);
+    for pdk in PdkId::all() {
+        let prof = pdk.profile();
+        assert!(!prof.default_models.is_empty());
+        assert!(prof.vdd_nom_v > 0.0);
+        assert!(prof.lg_nom_nm > 0.0);
+    }
+    assert_eq!(PdkId::parse("gaa2n"), Some(PdkId::Gt2n));
+    assert_eq!(PdkId::parse("ASAP7"), Some(PdkId::Asap7));
+    assert_eq!(PdkId::parse("sg13g2"), Some(PdkId::IhpSg13g2));
+}
+
+#[test]
+fn test_all_benchmark_decks_compile_all_dialects() {
+    let sp_dir = repo_root().join("benchmarks/sp");
+    let mut decks: Vec<PathBuf> = fs::read_dir(&sp_dir)
+        .expect("benchmarks/sp directory exists")
+        .filter_map(|e| e.ok().map(|x| x.path()))
+        .filter(|p| p.extension().is_some_and(|x| x == "sp"))
+        .collect();
+    decks.sort();
+    assert!(
+        decks.len() >= 18,
+        "expected at least 18 graded benchmark decks, found {}",
+        decks.len()
+    );
+
+    let mut sat_count = 0usize;
+    let mut unsat_count = 0usize;
+
+    for path in &decks {
+        let name = path.file_name().unwrap().to_str().unwrap();
+        let src = fs::read_to_string(path).unwrap();
+        let parsed = parser::parse_deck(&src).unwrap_or_else(|e| panic!("{name}: {e}"));
+        match parsed.expected {
+            Some(ExpectedStatus::Sat) => sat_count += 1,
+            Some(ExpectedStatus::Unsat) => unsat_count += 1,
+            None => panic!("{name}: missing `.expected sat|unsat`"),
+        }
+
+        let smt_exp = compile_str(&src, Dialect::Smt2Exp, None, None)
+            .unwrap_or_else(|e| panic!("{name} smt2-exp: {e}"));
+        check_balanced_parens(&smt_exp, &format!("{name} [smt2-exp]"));
+        assert!(
+            smt_exp.contains("(set-logic QF_NRA)"),
+            "{name} missing QF_NRA logic"
+        );
+        assert!(
+            !smt_exp.contains("(log "),
+            "{name} smt2-exp must be 100% pure `exp` without `log`"
+        );
+
+        let smt_dreal = compile_str(&src, Dialect::DrealOde, None, None)
+            .unwrap_or_else(|e| panic!("{name} dreal-ode: {e}"));
+        check_balanced_parens(&smt_dreal, &format!("{name} [dreal-ode]"));
+        if matches!(parsed.mode, spice2smt::ast::AnalysisMode::Tran { .. }) {
+            assert!(
+                smt_dreal.contains("(define-ode flow_1"),
+                "{name} dreal-ode missing define-ode"
+            );
+            assert!(
+                smt_dreal.contains("(forall_t 1"),
+                "{name} dreal-ode missing forall_t"
+            );
+        }
+
+        let lean_out = compile_str(&src, Dialect::Lean4, None, Some("BenchSpec"))
+            .unwrap_or_else(|e| panic!("{name} lean4: {e}"));
+        assert!(
+            lean_out.contains("def BenchSpec {R : Type} (TF : TranscendentalField R) : Prop :="),
+            "{name} lean4 missing header"
+        );
+    }
+
+    assert!(sat_count >= 5, "expected >= 5 SAT counterexample decks");
+    assert!(unsat_count >= 13, "expected >= 13 UNSAT safety decks");
+}
+
+#[test]
+fn test_verify_paving_sound_and_rejects_tampering() {
+    let sp_src =
+        fs::read_to_string(repo_root().join("benchmarks/sp/01_diode_clipper_pvt.sp")).unwrap();
+    let json_src =
+        fs::read_to_string(repo_root().join("examples/diode_clipper_paving.json")).unwrap();
+    let deck = parser::parse_deck(&sp_src).unwrap();
+    let sys = stamp::stamp_deck(&deck).unwrap();
+    let pav = paving::parse_paving_json(&json_src).unwrap();
+    let rep = paving::verify_paving(&sys, &pav).expect("diode clipper paving must verify");
+    assert_eq!(rep.total_leaves, 3);
+    assert_eq!(rep.unsafe_refuted_leaves, 1);
+    assert_eq!(rep.physics_refuted_leaves, 2);
+
+    // Tamper 1: claim the entire root box refutes `.unsafe` without splitting -> must fail!
+    let bad_root = paving::parse_paving_json(r#"{"type": "leaf", "reason": "unsafe_false"}"#)
+        .unwrap();
+    assert!(
+        paving::verify_paving(&sys, &bad_root).is_err(),
+        "unsound single-leaf paving must be rejected"
+    );
+
+    // Tamper 2: split out of bounds -> must fail!
+    let bad_split = paving::parse_paving_json(
+        r#"{"type": "split", "var": "v_out", "mid": 99.0, "left": {"type": "leaf", "reason": "unsafe_false"}, "right": {"type": "leaf", "reason": "unsafe_false"}}"#,
+    )
+    .unwrap();
+    assert!(
+        paving::verify_paving(&sys, &bad_split).is_err(),
+        "out-of-bounds split point must be rejected"
+    );
+}
+
+#[test]
+fn test_coupled_inductors_and_1d_pn_baseline() {
+    let coupled_deck = r#"
+* Coupled transformer transient test
+.expected unsat
+.mode tran dt=1.0e-9 steps=3 method=trap
+.param k_cpl [0.5, 0.8]
+.bound v(sec) [-5.0, 5.0]
+.init v(sec) = 0.0
+Vpri pri 0 STEP(base=0.0 step=1.0 t0=0.5e-9 tau=0.2e-9)
+L1   pri 0   10.0e-9 Rser=0.5
+L2   sec 0   10.0e-9 Rser=0.5
+K12  L1  L2  {k_cpl}
+Csec sec 0   50.0e-12
+Rsec sec 0   100.0
+.unsafe v(sec) > 4.0
+.end
+"#;
+    let smt = compile_str(coupled_deck, Dialect::Smt2Exp, None, None).unwrap();
+    check_balanced_parens(&smt, "coupled_inductors");
+    assert!(smt.contains("M_L1_L2"));
+
+    let pn1d_deck = r#"
+* Baseline 1D p-n junction Poisson check
+.pdk sky130
+.expected unsat
+.mode dc
+.param q_dope [1.2, 1.4]
+.param temp_k [273.0, 360.0]
+.tcad_pn_1d junc1 nodes=7 length_um=0.6 junction_um=0.25 q_dope={q_dope} nd_plus=50.0 temp={temp_k} v_bias=1.2
+.unsafe E_junc_v_per_um_junc1 > 80.0
+.end
+"#;
+    let smt_pn = compile_str(pn1d_deck, Dialect::Smt2Exp, None, None).unwrap();
+    check_balanced_parens(&smt_pn, "pn1d_baseline");
+}
+
+/// Damped Newton-Raphson solver on a `StampedSystem`'s equality constraints for witness / non-vacuity checks.
+fn solve_equality_system(
+    var_names: &[String],
+    init_guess: &BTreeMap<String, f64>,
+    fixed_params: &BTreeMap<String, f64>,
+    eqs: &[(Expr, Expr)],
+    t: f64,
+) -> Option<BTreeMap<String, f64>> {
+    let n = var_names.len();
+    assert_eq!(n, eqs.len(), "square system expected: vars={n}, eqs={}", eqs.len());
+    let mut env = fixed_params.clone();
+    for vn in var_names {
+        let val = init_guess.get(vn).copied().unwrap_or(0.2);
+        env.insert(vn.clone(), val);
+    }
+
+    let eval_res = |e_map: &BTreeMap<String, f64>| -> Result<Vec<f64>, String> {
+        let mut r = Vec::with_capacity(n);
+        for (lhs, rhs) in eqs {
+            r.push(lhs.eval_f64(e_map, t)? - rhs.eval_f64(e_map, t)?);
+        }
+        Ok(r)
+    };
+
+    for _iter in 0..400 {
+        let res = eval_res(&env).ok()?;
+        let max_r = res.iter().fold(0.0f64, |a, b| a.max(b.abs()));
+        if max_r < 1.0e-9 {
+            return Some(env);
+        }
+
+        // Finite-difference Jacobian J (n x n)
+        let mut jac = vec![vec![0.0; n]; n];
+        for (j, vj) in var_names.iter().enumerate() {
+            let orig = env[vj];
+            let eps = 1.0e-7 * orig.abs().max(1.0);
+            env.insert(vj.clone(), orig + eps);
+            let rp = eval_res(&env).ok()?;
+            env.insert(vj.clone(), orig);
+            for i in 0..n {
+                jac[i][j] = (rp[i] - res[i]) / eps;
+            }
+        }
+
+        // Gaussian elimination with partial pivoting for J * dx = -res
+        let mut aug = vec![vec![0.0; n + 1]; n];
+        for i in 0..n {
+            for j in 0..n {
+                aug[i][j] = jac[i][j];
+            }
+            aug[i][n] = -res[i];
+        }
+        for col in 0..n {
+            let mut piv = col;
+            for row in (col + 1)..n {
+                if aug[row][col].abs() > aug[piv][col].abs() {
+                    piv = row;
+                }
+            }
+            if aug[piv][col].abs() < 1.0e-28 {
+                eprintln!("  [diag-piv] singular col={col} ({}) piv={}", var_names[col], aug[piv][col]);
+                return None;
+            }
+            aug.swap(col, piv);
+            let diag = aug[col][col];
+            for val in &mut aug[col][col..=n] {
+                *val /= diag;
+            }
+            for row in 0..n {
+                if row != col {
+                    let f = aug[row][col];
+                    for k in col..=n {
+                        aug[row][k] -= f * aug[col][k];
+                    }
+                }
+            }
+        }
+
+        let step: Vec<f64> = (0..n).map(|i| aug[i][n]).collect();
+        // Keep exact Newton direction `-J^{-1} F(x)`; choose initial `alpha <= 1` so voltage jumps <= 0.25V
+        let mut max_vstep = 0.0f64;
+        for (j, vj) in var_names.iter().enumerate() {
+            if vj.starts_with("v_") || vj.starts_with("psi_") || vj.starts_with("phin_") {
+                max_vstep = max_vstep.max(step[j].abs());
+            }
+        }
+        let mut alpha = if max_vstep > 0.25 {
+            0.25 / max_vstep
+        } else {
+            1.0
+        };
+
+        // Backtracking line search on L_inf residual norm (or accept damped Newton step)
+        let base_env = env.clone();
+        let mut accepted = false;
+        let min_alpha = alpha / 64.0;
+        while alpha >= min_alpha {
+            for (j, vj) in var_names.iter().enumerate() {
+                env.insert(vj.clone(), base_env[vj] + alpha * step[j]);
+            }
+            if let Ok(rn) = eval_res(&env) {
+                let nr = rn.iter().fold(0.0f64, |a, b| a.max(b.abs()));
+                if nr.is_finite() && nr < max_r {
+                    accepted = true;
+                    break;
+                }
+            }
+            alpha *= 0.5;
+        }
+        if !accepted {
+            let damp = (0.25 / max_vstep.max(0.25)).min(0.5);
+            for (j, vj) in var_names.iter().enumerate() {
+                env.insert(vj.clone(), base_env[vj] + damp * step[j]);
+            }
+        }
+    }
+    None
+}
+
+fn exact_bernoulli(d: f64) -> f64 {
+    if d.abs() < 1.0e-5 {
+        let d2 = d * d;
+        1.0 - 0.5 * d + d2 / 12.0 - (d2 * d2) / 720.0
+    } else {
+        d / d.exp_m1()
+    }
+}
+
+/// Extract equality equations from an algebraic or ODE stamped system and solve at `param_vals`,
+/// then independently verify EVERY stamped bound, equality (`|lhs - rhs| <= 1e-8`), and inequality.
+fn simulate_stamped(
+    sys: &StampedSystem,
+    param_vals: &BTreeMap<String, f64>,
+    dc_seed: &BTreeMap<String, f64>,
+) -> Option<(BTreeMap<String, f64>, bool)> {
+    match &sys.body {
+        StampedBody::Algebraic { vars, constraints } => {
+            // Separate closed-form TCAD auxiliary/Slotboom variables (`E_*`, `Bp_*`, `phin_*`,
+            // `id_leak_ua_*`, `I_stack_ua_*`, `psi_mid_*`) during Newton iteration on `(psi, T_ch)`
+            // so the Jacobian is strictly elliptic/non-singular, then verify EVERY unmodified
+            // stamped constraint (including raw `phin` continuity and `Bp*(E-1)=Delta`) on `sol`!
+            let mut sg_edges: Vec<(String, String, Expr)> = Vec::new();
+            let mut cont_edges: Vec<Expr> = Vec::new();
+            let mut phin_vars: Vec<String> = Vec::new();
+            let mut explicit_defs: Vec<(String, Expr)> = Vec::new();
+            let mut primary_eqs: Vec<(Expr, Expr)> = Vec::new();
+            let mut all_eqs: Vec<(Expr, Expr)> = Vec::new();
+            let mut ineqs: Vec<Formula> = Vec::new();
+
+            for v in vars {
+                if v.name.starts_with("phin_") {
+                    phin_vars.push(v.name.clone());
+                }
+            }
+
+            for c in constraints {
+                if let Formula::Cmp {
+                    op: CmpOp::Eq,
+                    lhs,
+                    rhs,
+                } = &c.formula
+                {
+                    all_eqs.push((lhs.clone(), rhs.clone()));
+                    if let (Expr::Var(ename), Expr::Exp(delta_box)) = (lhs, rhs) {
+                        if let Some(rest) = ename.strip_prefix("E_sg_") {
+                            sg_edges.push((
+                                ename.clone(),
+                                format!("Bp_sg_{rest}"),
+                                (**delta_box).clone(),
+                            ));
+                            continue;
+                        }
+                        if let Some(rest) = ename.strip_prefix("E_gaa_") {
+                            sg_edges.push((
+                                ename.clone(),
+                                format!("Bp_gaa_{rest}"),
+                                (**delta_box).clone(),
+                            ));
+                            continue;
+                        }
+                    }
+                    if let Expr::Mul(bp_box, _) = lhs {
+                        if let Expr::Var(bp_name) = bp_box.as_ref() {
+                            if bp_name.starts_with("Bp_sg_") || bp_name.starts_with("Bp_gaa_") {
+                                continue;
+                            }
+                        }
+                    }
+                    if c.comment.contains("current continuity") {
+                        if cont_edges.is_empty() {
+                            cont_edges.push(rhs.clone());
+                        }
+                        cont_edges.push(lhs.clone());
+                        continue;
+                    }
+                    if let Expr::Var(vname) = lhs {
+                        if vname.starts_with("id_leak_ua_")
+                            || vname.starts_with("I_stack_ua_")
+                            || vname.starts_with("psi_mid_")
+                        {
+                            explicit_defs.push((vname.clone(), rhs.clone()));
+                            continue;
+                        }
+                    }
+                    primary_eqs.push((lhs.clone(), rhs.clone()));
+                } else {
+                    ineqs.push(c.formula.clone());
+                }
+            }
+
+            let is_eliminated = |name: &str| {
+                name.starts_with("E_sg_")
+                    || name.starts_with("Bp_sg_")
+                    || name.starts_with("E_gaa_")
+                    || name.starts_with("Bp_gaa_")
+                    || name.starts_with("phin_")
+                    || name.starts_with("id_leak_ua_")
+                    || name.starts_with("I_stack_ua_")
+                    || name.starts_with("psi_mid_")
+            };
+            let primary_vnames: Vec<String> = vars
+                .iter()
+                .filter(|v| !is_eliminated(&v.name))
+                .map(|v| v.name.clone())
+                .collect();
+
+            let solve_with_sg_projection =
+                |guess_map: &BTreeMap<String, f64>| -> Option<BTreeMap<String, f64>> {
+                    let n = primary_vnames.len();
+                    assert_eq!(
+                        n,
+                        primary_eqs.len(),
+                        "square primary system expected for {}: vars={n} ({primary_vnames:?}), eqs={}",
+                        sys.title,
+                        primary_eqs.len()
+                    );
+                    let mut env = param_vals.clone();
+                    for vn in &primary_vnames {
+                        env.insert(vn.clone(), guess_map.get(vn).copied().unwrap_or(0.2));
+                    }
+                    let refresh_sg = |m: &mut BTreeMap<String, f64>| -> Result<(), String> {
+                        for (ename, bpname, delta_expr) in &sg_edges {
+                            let d = delta_expr.eval_f64(m, 0.0)?;
+                            m.insert(ename.clone(), d.exp());
+                            m.insert(bpname.clone(), exact_bernoulli(d));
+                        }
+                        if !cont_edges.is_empty() && !phin_vars.is_empty() {
+                            // Extract thermal voltage `vt` and drain bias `vds` from device setup:
+                            // `vt = KB_OVER_Q * T` where T is `T_ch_*` if present, else `temp_k`
+                            let kb_q = 8.617_333_262e-5_f64;
+                            let temp = m
+                                .iter()
+                                .find(|(k, _)| k.starts_with("T_ch_"))
+                                .map(|(_, v)| *v)
+                                .or_else(|| m.get("temp_k").copied())
+                                .unwrap_or(300.0);
+                            let vt = kb_q * temp;
+                            // Probe `vds` from the last edge `cont_edges[last]` where `phin_R = vds`:
+                            // setting `phin_{last} = 0` makes `edge = G_last * (1 - exp(-vds/vt))`,
+                            // and comparing against `G_last` from an interior edge gives exact `G_e`!
+                            // Even simpler: in `13` vds=0.70, in `14a` vds=0.65, in `14b` vds=0.75;
+                            // we can read `u_end = exp(-vds/vt)` directly with zero hardcoding by probing
+                            // `cont_edges.last()` at `phin_last = 0.0` and `phin_last = vt * ln(2)`!
+                            // Let `J(0) = G * (1 - u_end)` and `J(vt*ln2) = G * (0.5 - u_end)`:
+                            // Then `J(0) - J(vt*ln2) = 0.5 * G` => `G = 2 * (J(0) - J(vt*ln2))`,
+                            // and `u_end = 1.0 - J(0) / G`!
+                            let n_edges = cont_edges.len();
+                            let ln2_vt = vt * 2.0_f64.ln();
+                            let mut inv_g = Vec::with_capacity(n_edges);
+                            let mut u_end = 0.0f64;
+                            for (e, edge_expr) in cont_edges.iter().enumerate() {
+                                let g_e = if e == 0 {
+                                    // phin_0 = 0 (fixed), phin_1 = phin_vars[0]
+                                    m.insert(phin_vars[0].clone(), ln2_vt);
+                                    2.0 * edge_expr.eval_f64(m, 0.0)?
+                                } else if e + 1 < n_edges {
+                                    m.insert(phin_vars[e - 1].clone(), 0.0);
+                                    m.insert(phin_vars[e].clone(), ln2_vt);
+                                    2.0 * edge_expr.eval_f64(m, 0.0)?
+                                } else {
+                                    let pv = &phin_vars[e - 1];
+                                    m.insert(pv.clone(), 0.0);
+                                    let j0 = edge_expr.eval_f64(m, 0.0)?;
+                                    m.insert(pv.clone(), ln2_vt);
+                                    let j1 = edge_expr.eval_f64(m, 0.0)?;
+                                    let g = 2.0 * (j0 - j1);
+                                    u_end = (1.0 - j0 / g).max(1.0e-300);
+                                    g
+                                };
+                                inv_g.push(1.0 / g_e.max(1.0e-300));
+                            }
+                            let w_total: f64 = inv_g.iter().sum();
+                            for (idx, pv) in phin_vars.iter().enumerate() {
+                                let i_node = idx + 1;
+                                let w_lt: f64 = inv_g[..i_node].iter().sum();
+                                let w_ge: f64 = inv_g[i_node..].iter().sum();
+                                let u_i = (u_end * w_lt + w_ge) / w_total;
+                                m.insert(pv.clone(), -vt * u_i.ln());
+                            }
+                        }
+                        for (vname, rhs_expr) in &explicit_defs {
+                            let val = rhs_expr.eval_f64(m, 0.0)?;
+                            m.insert(vname.clone(), val);
+                        }
+                        Ok(())
+                    };
+                    let eval_res = |m: &BTreeMap<String, f64>| -> Result<Vec<f64>, String> {
+                        let mut m_full = m.clone();
+                        refresh_sg(&mut m_full)?;
+                        let mut r = Vec::with_capacity(n);
+                        for (lhs, rhs) in &primary_eqs {
+                            r.push(lhs.eval_f64(&m_full, 0.0)? - rhs.eval_f64(&m_full, 0.0)?);
+                        }
+                        Ok(r)
+                    };
+
+                    for _iter in 0..400 {
+                        let res = eval_res(&env).ok()?;
+                        let max_r = res.iter().fold(0.0f64, |a, b| a.max(b.abs()));
+                        if max_r < 1.0e-10 {
+                            refresh_sg(&mut env).ok()?;
+                            return Some(env);
+                        }
+                        let mut jac = vec![vec![0.0; n]; n];
+                        for (j, vj) in primary_vnames.iter().enumerate() {
+                            let orig = env[vj];
+                            let eps = 1.0e-7 * orig.abs().max(1.0);
+                            env.insert(vj.clone(), orig + eps);
+                            let rp = eval_res(&env).ok()?;
+                            env.insert(vj.clone(), orig);
+                            for i in 0..n {
+                                jac[i][j] = (rp[i] - res[i]) / eps;
+                            }
+                        }
+                        let mut aug = vec![vec![0.0; n + 1]; n];
+                        for i in 0..n {
+                            for j in 0..n {
+                                aug[i][j] = jac[i][j];
+                            }
+                            aug[i][n] = -res[i];
+                        }
+                        for col in 0..n {
+                            let mut piv = col;
+                            for row in (col + 1)..n {
+                                if aug[row][col].abs() > aug[piv][col].abs() {
+                                    piv = row;
+                                }
+                            }
+                            if aug[piv][col].abs() < 1.0e-28 {
+                                eprintln!(
+                                    "  [diag-piv] {}: singular col={col} ({})",
+                                    sys.title, primary_vnames[col]
+                                );
+                                return None;
+                            }
+                            aug.swap(col, piv);
+                            let diag = aug[col][col];
+                            for val in &mut aug[col][col..=n] {
+                                *val /= diag;
+                            }
+                            for row in 0..n {
+                                if row != col {
+                                    let f = aug[row][col];
+                                    for k in col..=n {
+                                        aug[row][k] -= f * aug[col][k];
+                                    }
+                                }
+                            }
+                        }
+                        let step: Vec<f64> = (0..n).map(|i| aug[i][n]).collect();
+                        let mut max_vstep = 0.0f64;
+                        for (j, vj) in primary_vnames.iter().enumerate() {
+                            if vj.starts_with("v_")
+                                || vj.starts_with("psi_")
+                                || vj.starts_with("phin_")
+                            {
+                                max_vstep = max_vstep.max(step[j].abs());
+                            } else if vj.starts_with("T_ch_") {
+                                max_vstep = max_vstep.max(step[j].abs() / 80.0);
+                            }
+                        }
+                        let mut alpha = if max_vstep > 0.20 {
+                            0.20 / max_vstep
+                        } else {
+                            1.0
+                        };
+                        let base_env = env.clone();
+                        let mut accepted = false;
+                        let min_alpha = alpha / 64.0;
+                        while alpha >= min_alpha {
+                            for (j, vj) in primary_vnames.iter().enumerate() {
+                                env.insert(vj.clone(), base_env[vj] + alpha * step[j]);
+                            }
+                            if let Ok(rn) = eval_res(&env) {
+                                let nr = rn.iter().fold(0.0f64, |a, b| a.max(b.abs()));
+                                if nr.is_finite() && nr < max_r {
+                                    accepted = true;
+                                    break;
+                                }
+                            }
+                            alpha *= 0.5;
+                        }
+                        if !accepted {
+                            let damp = (0.20 / max_vstep.max(0.20)).min(0.5);
+                            for (j, vj) in primary_vnames.iter().enumerate() {
+                                env.insert(vj.clone(), base_env[vj] + damp * step[j]);
+                            }
+                        }
+                    }
+                    None
+                };
+
+            let mut guess = dc_seed.clone();
+            for v in vars {
+                guess.entry(v.name.clone()).or_insert_with(|| {
+                    if v.name.starts_with("y_sp_")
+                        || v.name.starts_with("su_")
+                        || v.name.starts_with("seeff_")
+                        || v.name.starts_with("lam_")
+                    {
+                        1.2
+                    } else if v.name.starts_with("psi_") {
+                        0.45
+                    } else if v.name.starts_with("phin_") {
+                        let parts: Vec<&str> = v.name.split('_').collect();
+                        let i_slice = parts
+                            .get(2)
+                            .and_then(|s| s.parse::<usize>().ok())
+                            .unwrap_or(1);
+                        0.12 * (i_slice as f64)
+                    } else if v.name.starts_with("Z0_") {
+                        50.0
+                    } else if v.name.starts_with("Zdiff_") {
+                        100.0
+                    } else if v.name.starts_with("T_ch_") {
+                        340.0
+                    } else if v.name.starts_with("id_leak_")
+                        || v.name.starts_with("istack_")
+                        || v.name.starts_with("p_diss_")
+                    {
+                        0.001
+                    } else {
+                        (0.5 * (v.lo + v.hi)).clamp(-2.0, 2.0)
+                    }
+                });
+            }
+            let Some(sol) = solve_with_sg_projection(&guess) else {
+                eprintln!("  [diag] {}: Newton did not converge", sys.title);
+                return None;
+            };
+            // Verify EVERY original stamped equality (including E_e and Bp_e*(E_e-1)=Delta_e!)
+            for (lhs, rhs) in &all_eqs {
+                let lv = lhs.eval_f64(&sol, 0.0).ok()?;
+                let rv = rhs.eval_f64(&sol, 0.0).ok()?;
+                if (lv - rv).abs() > 1.0e-8 * lv.abs().max(rv.abs()).max(1.0) {
+                    eprintln!(
+                        "  [diag] {}: equality residual too large: |{lv} - {rv}|",
+                        sys.title
+                    );
+                    return None;
+                }
+            }
+            for v in vars {
+                let val = sol[&v.name];
+                if val < v.lo - 1e-7 || val > v.hi + 1e-7 {
+                    eprintln!(
+                        "  [diag] {}: var `{}` = {} out of bounds [{}, {}]",
+                        sys.title, v.name, val, v.lo, v.hi
+                    );
+                    return None;
+                }
+            }
+            for iq in &ineqs {
+                if !iq.eval_f64(&sol, 0.0).ok()? {
+                    eprintln!("  [diag] {}: inequality violated: {iq:?}", sys.title);
+                    return None;
+                }
+            }
+            let is_unsafe = sys.unsafe_formula.eval_f64(&sol, 0.0).ok()?;
+            Some((sol, is_unsafe))
+        }
+        StampedBody::Ode {
+            static_vars,
+            static_constraints,
+            states,
+            dt,
+            steps,
+            method,
+        } => {
+            let mut full_params = param_vals.clone();
+            if !static_vars.is_empty() {
+                let sv_names: Vec<String> = static_vars.iter().map(|v| v.name.clone()).collect();
+                let mut s_eqs = Vec::new();
+                for c in static_constraints {
+                    if let Formula::Cmp {
+                        op: CmpOp::Eq,
+                        lhs,
+                        rhs,
+                    } = &c.formula
+                    {
+                        s_eqs.push((lhs.clone(), rhs.clone()));
+                    }
+                }
+                let mut s_guess = BTreeMap::new();
+                for v in static_vars {
+                    s_guess.insert(
+                        v.name.clone(),
+                        if v.name.starts_with("Z0_") {
+                            50.0
+                        } else if v.name.starts_with("Zdiff_") {
+                            100.0
+                        } else if v.name.starts_with("M_")
+                            || v.name.starts_with("Ltot_")
+                            || v.name.starts_with("Lm_")
+                        {
+                            1.0e-9
+                        } else if v.name.starts_with("Ctot_") || v.name.starts_with("Cm_") {
+                            2.0e-12
+                        } else {
+                            1.5
+                        },
+                    );
+                }
+                let s_sol =
+                    solve_equality_system(&sv_names, &s_guess, param_vals, &s_eqs, 0.0)?;
+                for (k, v) in s_sol {
+                    full_params.insert(k, v);
+                }
+            }
+
+            let st_names: Vec<String> = states.iter().map(|s| s.name.clone()).collect();
+            let mut cur_state = full_params.clone();
+            for st in states {
+                let x0 = match &st.init {
+                    InitSpec::Interval(lo, hi) => 0.5 * (lo + hi),
+                    InitSpec::Exact(e) => e.eval_f64(&cur_state, 0.0).ok()?,
+                };
+                cur_state.insert(st.name.clone(), x0);
+            }
+
+            let mut hit_unsafe = false;
+            for k in 1..=*steps {
+                let tk = (k as f64) * (*dt);
+                let tk_prev = ((k - 1) as f64) * (*dt);
+                let mut step_eqs = Vec::with_capacity(states.len());
+                for st in states {
+                    let x_prev = cur_state[&st.name];
+                    let rhs_step = match method {
+                        TranMethod::BackwardEuler => {
+                            Expr::add(Expr::num(x_prev), Expr::mul(Expr::num(*dt), st.rhs.clone()))
+                        }
+                        TranMethod::Trapezoidal => {
+                            let f_prev = st.rhs.eval_f64(&cur_state, tk_prev).ok()?;
+                            Expr::add(
+                                Expr::num(x_prev + 0.5 * (*dt) * f_prev),
+                                Expr::mul(Expr::num(0.5 * (*dt)), st.rhs.clone()),
+                            )
+                        }
+                    };
+                    step_eqs.push((Expr::var(&st.name), rhs_step));
+                }
+                let sol_k =
+                    solve_equality_system(&st_names, &cur_state, &full_params, &step_eqs, tk)?;
+                for st in states {
+                    let val = sol_k[&st.name];
+                    if val < st.lo - 1e-7 || val > st.hi + 1e-7 {
+                        return None;
+                    }
+                }
+                if sys.unsafe_formula.eval_f64(&sol_k, tk).ok()? {
+                    hit_unsafe = true;
+                }
+                cur_state = sol_k;
+            }
+            Some((cur_state, hit_unsafe))
+        }
+    }
+}
+
+#[test]
+fn test_physical_nonvacuity_and_sat_witnesses_across_all_19_benchmarks() {
+    let sp_dir = repo_root().join("benchmarks/sp");
+    let mut decks: Vec<PathBuf> = fs::read_dir(&sp_dir)
+        .unwrap()
+        .filter_map(|e| e.ok().map(|x| x.path()))
+        .filter(|p| p.extension().is_some_and(|x| x == "sp"))
+        .collect();
+    decks.sort();
+
+    let mut failures = Vec::new();
+    for path in &decks {
+        let fname = path.file_name().unwrap().to_str().unwrap();
+        let src = fs::read_to_string(path).unwrap();
+        let deck = parser::parse_deck(&src).unwrap();
+        let sys = stamp::stamp_deck(&deck).unwrap();
+
+        let mut mid_params = BTreeMap::new();
+        for p in &sys.params {
+            mid_params.insert(p.name.clone(), 0.5 * (p.lo + p.hi));
+        }
+
+        match sys.expected.unwrap() {
+            ExpectedStatus::Unsat => {
+                let mut seed = BTreeMap::new();
+                if fname.starts_with("03a_") {
+                    seed.insert("v_q".to_string(), 0.68);
+                    seed.insert("v_qb".to_string(), 0.04);
+                } else if fname.starts_with("04b_") {
+                    seed.insert("v_vdd".to_string(), 3.0);
+                    seed.insert("v_ref".to_string(), 0.64);
+                    seed.insert("v_ve2".to_string(), 0.12);
+                    seed.insert("i_Vsup".to_string(), -0.0006);
+                } else if fname.starts_with("05_") {
+                    seed.insert("v_sup".to_string(), 0.90);
+                    seed.insert("v_nwell".to_string(), 0.90);
+                    seed.insert("v_psub".to_string(), 0.0);
+                }
+                match simulate_stamped(&sys, &mid_params, &seed) {
+                    Some((sol, false)) => {
+                        if fname.starts_with("13_") {
+                            let leak = sol["id_leak_ua_fin7"];
+                            assert!(
+                                leak > 0.0 && leak < 0.15,
+                                "13 FinFET off-state leakage must be positive and < 0.15 uA/um, got {leak}"
+                            );
+                        }
+                        if fname.starts_with("14a_") {
+                            let tch = sol["T_ch_gaa2n"];
+                            assert!(
+                                tch > 315.0 && tch < 410.0,
+                                "14a GAA channel temperature must self-heat (> T_amb) yet stay < 410 K, got {tch}"
+                            );
+                        }
+                        println!("  [OK UNSAT non-vacuous] {fname}");
+                    }
+                    Some((sol, true)) => {
+                        failures.push(format!("{fname}: expected UNSAT, but nominal solution hit .unsafe ({sol:?})"));
+                    }
+                    None => {
+                        failures.push(format!("{fname}: failed non-vacuity convergence"));
+                    }
+                }
+            }
+            ExpectedStatus::Sat => {
+                let mut p = mid_params.clone();
+                let mut seed = BTreeMap::new();
+                if fname.starts_with("03b_") {
+                    p.insert("vdd".to_string(), 0.62);
+                    p.insert("dtfin_nm".to_string(), -1.1);
+                    p.insert("dphim_q".to_string(), -0.09);
+                    p.insert("dphim_qb".to_string(), -0.09);
+                    seed.insert("v_q".to_string(), 0.30);
+                    seed.insert("v_qb".to_string(), 0.30);
+                } else if fname.starts_with("04a_") {
+                    seed.insert("v_vdd".to_string(), 3.0);
+                    seed.insert("v_ref".to_string(), 0.001);
+                    seed.insert("v_ve2".to_string(), 0.0);
+                    seed.insert("v_vc1".to_string(), 2.999);
+                    for i in 1..=4 {
+                        seed.insert(format!("y_sp_Mp1_f_{i}"), 1.0e-4);
+                        seed.insert(format!("y_sp_Mp1_r_{i}"), 1.0e-4);
+                        seed.insert(format!("y_sp_Mp2_f_{i}"), 1.0e-4);
+                        seed.insert(format!("y_sp_Mp2_r_{i}"), 1.0e-4);
+                    }
+                } else if fname.starts_with("09b_") {
+                    p.insert("dw_etch".to_string(), -40.0e-6);
+                    p.insert("dh_lam".to_string(), 16.0e-6);
+                    p.insert("t_cu".to_string(), 29.0e-6);
+                    p.insert("er_lam".to_string(), 3.88);
+                } else if fname.starts_with("12a_") {
+                    p.insert("er_p".to_string(), 4.68);
+                    p.insert("er_n".to_string(), 3.82);
+                    p.insert("l_slot".to_string(), 5.8e-9);
+                } else if fname.starts_with("14b_") {
+                    p.insert("dtns_nm".to_string(), 0.55);
+                    p.insert("tamb_k".to_string(), 382.0);
+                    p.insert("rth_kw".to_string(), 1.35e6);
+                    seed.insert("T_ch_gaa2n".to_string(), 435.0);
+                }
+
+                match simulate_stamped(&sys, &p, &seed) {
+                    Some((sol, true)) => {
+                        if fname.starts_with("14b_") {
+                            let tch = sol["T_ch_gaa2n"];
+                            assert!(
+                                tch > 410.0,
+                                "14b GAA thermal runaway witness must satisfy T_ch > 410 K, got {tch}"
+                            );
+                        }
+                        println!("  [OK SAT witness]       {fname}");
+                    }
+                    Some((sol, false)) => {
+                        failures.push(format!("{fname}: expected SAT witness, but .unsafe was false ({sol:?})"));
+                    }
+                    None => {
+                        failures.push(format!("{fname}: failed SAT witness convergence"));
+                    }
+                }
+            }
+        }
+    }
+    assert!(failures.is_empty(), "Benchmark physical checks failed:\n{}", failures.join("\n"));
+}
+
+#[test]
+fn test_corner_soundness_and_scientific_literal_precision() {
+    // 1. Verify exact exponent handling without clamping in Lean and SMT-LIB2 emitters
+    let lean_tiny = spice2smt::emit_lean::format_lean_rat_call(1.0e-30);
+    assert_eq!(lean_tiny, "(TF.div (TF.ofInt 1) (TF.pow10 30))");
+    let smt_ns = spice2smt::emit_smt2::format_smt2_real(1.375e-9);
+    assert_eq!(smt_ns, "(/ 1.375 1000000000.0)");
+
+    // 2. Verify all 2^5 = 32 vertices of 09a's 5D DFM polytope stay strictly safe (Z0 in [45,55], Zdiff in [90,110])
+    let src_09a =
+        fs::read_to_string(repo_root().join("benchmarks/sp/09a_pcb_microstrip_dfm_unsat.sp"))
+            .unwrap();
+    let sys_09a = stamp::stamp_deck(&parser::parse_deck(&src_09a).unwrap()).unwrap();
+    for mask in 0..32usize {
+        let mut p = BTreeMap::new();
+        for (bit, param) in sys_09a.params.iter().enumerate() {
+            let v = if ((mask >> bit) & 1) == 0 {
+                param.lo
+            } else {
+                param.hi
+            };
+            p.insert(param.name.clone(), v);
+        }
+        let (sol, is_unsafe) =
+            simulate_stamped(&sys_09a, &p, &BTreeMap::new()).expect("09a corner must solve");
+        assert!(
+            !is_unsafe,
+            "09a corner mask={mask} violated impedance spec: Z0={}, Zdiff={}",
+            sol["Z0_tl50"], sol["Zdiff_diff90"]
+        );
+    }
+
+    // 3. Verify extremal corners of 04b guarded SiGe HBT reference have inhabited DC equilibria > 0.40V
+    let src_04b =
+        fs::read_to_string(repo_root().join("benchmarks/sp/04b_ihp_sige_bandgap_guarded_unsat.sp"))
+            .unwrap();
+    let sys_04b = stamp::stamp_deck(&parser::parse_deck(&src_04b).unwrap()).unwrap();
+    for &(vdd, temp_k, deg_ge) in &[(2.7, 373.0, 0.090), (3.3, 273.0, 0.080)] {
+        let mut p = BTreeMap::new();
+        p.insert("vdd".to_string(), vdd);
+        p.insert("temp_k".to_string(), temp_k);
+        p.insert("deg_ge".to_string(), deg_ge);
+        let mut seed = BTreeMap::new();
+        seed.insert("v_vdd".to_string(), vdd);
+        seed.insert("v_ref".to_string(), 0.72);
+        seed.insert("v_ve2".to_string(), 0.15);
+        seed.insert("i_Vsup".to_string(), -0.0006);
+        let (sol, is_unsafe) =
+            simulate_stamped(&sys_04b, &p, &seed).expect("04b extremal corner must have DC equilibrium");
+        assert!(
+            !is_unsafe && sol["v_ref"] > 0.45,
+            "04b corner ({vdd}, {temp_k}, {deg_ge}) unsafe or collapsed: v_ref={}",
+            sol["v_ref"]
+        );
+    }
+
+    // 4. Verify all 2^4 = 16 corners of 13 (ASAP7 2D FinFET) and 14a (gt2n GAA electro-thermal) stay strictly safe!
+    for rel in [
+        "benchmarks/sp/13_asap7_finfet_2d_poisson_qconfinement.sp",
+        "benchmarks/sp/14a_gt2n_gaa_nanosheet_electrothermal_unsat.sp",
+    ] {
+        let src = fs::read_to_string(repo_root().join(rel)).unwrap();
+        let sys = stamp::stamp_deck(&parser::parse_deck(&src).unwrap()).unwrap();
+        for mask in 0..16usize {
+            let mut p = BTreeMap::new();
+            for (bit, param) in sys.params.iter().enumerate() {
+                let v = if ((mask >> bit) & 1) == 0 {
+                    param.lo
+                } else {
+                    param.hi
+                };
+                p.insert(param.name.clone(), v);
+            }
+            let (sol, is_unsafe) =
+                simulate_stamped(&sys, &p, &BTreeMap::new()).expect("TCAD corner must converge");
+            assert!(
+                !is_unsafe,
+                "{rel} corner mask={mask} unexpectedly hit .unsafe: {sol:?}"
+            );
+        }
+    }
+}

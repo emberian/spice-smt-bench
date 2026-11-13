@@ -1,0 +1,24 @@
+{
+  "type": "split",
+  "var": "v_out",
+  "mid": 0.84,
+  "left": {
+    "type": "leaf",
+    "reason": "unsafe_false"
+  },
+  "right": {
+    "type": "split",
+    "var": "i_D1",
+    "mid": 0.005,
+    "left": {
+      "type": "leaf",
+      "reason": "constraint_violated",
+      "constraint_index": 1
+    },
+    "right": {
+      "type": "leaf",
+      "reason": "constraint_violated",
+      "constraint_index": 3
+    }
+  }
+}

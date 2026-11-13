@@ -1,0 +1,6 @@
+name = "SpiceSmtBench"
+version = "0.1.0"
+defaultTargets = ["SpiceSmtBench"]
+
+[[lean_lib]]
+name = "SpiceSmtBench"
