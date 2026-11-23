@@ -2,4 +2,3 @@ import SpiceSmtBench.PhysicsModels
 import SpiceSmtBench.PavingFormula
 import SpiceSmtBench.TargetsGenerated
 import SpiceSmtBench.Targets
-import SpiceSmtBench.FinTransport

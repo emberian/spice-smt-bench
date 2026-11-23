@@ -58,7 +58,7 @@ private theorem upperRow (i j : Fin 3) {dx dy : ℝ} (hx : 4.95 ≤ dx)
   have e2 := (Rat.cast_le (K := ℝ)).mpr hh
   change _ ≤ (0:ℚ) at hl hh
   push_cast at e1 e2
-  have fact := quadratic (Rat.cast_nonneg.mpr ha) yl yh (by convert e1 using 1 <;> norm_num) (by convert e2 using 1 <;> norm_num)
+  have fact := quadratic (Rat.cast_nonneg.mpr ha) yl yh (by convert e1 using 1) (by convert e2 using 1)
   change (A k j:ℝ)*(dy*dy)+(B k j:ℝ)*dy+(C k j:ℝ) ≤ 0 at fact
   rw [castA,castB,castC] at fact
   dsimp only [row]

@@ -30,7 +30,7 @@ private theorem integrated {a b : ℝ} (hn : a ≠ b) :
   have derivative (x : ℝ) : HasDerivAt f (Real.exp (-((1-x)*a+x*b))) x := by
     have h := ((((hasDerivAt_const x (1:ℝ)).sub (hasDerivAt_id x)).mul_const a).add
       ((hasDerivAt_id x).mul_const b)).neg.exp.div_const (a-b)
-    convert h using 1 <;> dsimp [f] <;> field_simp <;> ring
+    convert h using 1 <;> dsimp [f]; field_simp; ring
   have h := intervalIntegral.integral_eq_sub_of_hasDerivAt (a := (0:ℝ)) (b := 1) (fun x _ => derivative x)
     (Continuous.intervalIntegrable (by fun_prop) ..)
   change resistance a b = _ at h
