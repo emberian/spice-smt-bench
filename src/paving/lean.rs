@@ -1,5 +1,8 @@
 //! Emit kernel-replayed certificates for algebraic decks. Stamp literals use
 //! the same decimal rationals as emit_lean; binary split hints retain every bit.
+mod root;
+pub use root::emit_root_box;
+
 use super::{verify_paving, LeafReason, PavingNode};
 use crate::ast::{CmpOp, ExpectedStatus, Expr, Formula};
 use crate::emit_lean::emit_lean_def;
@@ -46,12 +49,19 @@ fn index(indices: &Indices<'_>, name: &str) -> Result<usize, String> {
 }
 
 fn expr(e: &Expr, indices: &Indices<'_>) -> Result<String, String> {
+    expression(e, &|name| Ok(format!("(.var {})", index(indices, name)?)))
+}
+
+fn expression(
+    e: &Expr,
+    variable: &impl Fn(&str) -> Result<String, String>,
+) -> Result<String, String> {
     let (op, a, b) = match e {
         Expr::Num(v) => return Ok(format!("(.const {})", endpoint(*v)?)),
-        Expr::Var(v) => return Ok(format!("(.var {})", index(indices, v)?)),
-        Expr::Neg(a) => return Ok(format!("(.neg {})", expr(a, indices)?)),
-        Expr::Exp(a) => return Ok(format!("(.exp {})", expr(a, indices)?)),
-        Expr::Ln1pExp(a) => return Ok(format!("(.softplus {})", expr(a, indices)?)),
+        Expr::Var(v) => return variable(v),
+        Expr::Neg(a) => return Ok(format!("(.neg {})", expression(a, variable)?)),
+        Expr::Exp(a) => return Ok(format!("(.exp {})", expression(a, variable)?)),
+        Expr::Ln1pExp(a) => return Ok(format!("(.softplus {})", expression(a, variable)?)),
         Expr::Add(a, b) => ("add", a, b),
         Expr::Sub(a, b) => ("sub", a, b),
         Expr::Mul(a, b) => ("mul", a, b),
@@ -60,8 +70,8 @@ fn expr(e: &Expr, indices: &Indices<'_>) -> Result<String, String> {
     };
     Ok(format!(
         "(.{op} {} {})",
-        expr(a, indices)?,
-        expr(b, indices)?
+        expression(a, variable)?,
+        expression(b, variable)?
     ))
 }
 
@@ -300,8 +310,16 @@ pub fn emit_witness(
                 "bench03b_asap7_sram_fin_collapse_proved",
             ),
             (
+                include_str!("../../benchmarks/sp/04a_ihp_sige_bandgap_trojan_sat.sp"),
+                "bench04a_sige_bandgap_trojan_proved",
+            ),
+            (
                 include_str!("../../benchmarks/sp/09b_pcb_microstrip_overetch_sat.sp"),
                 "bench09b_pcb_microstrip_overetch_proved",
+            ),
+            (
+                include_str!("../../benchmarks/sp/14b_gt2n_gaa_nanosheet_thermal_runaway_sat.sp"),
+                "bench14b_gaa_thermal_excursion_proved",
             ),
         ] {
             let deck = crate::parser::parse_deck(source)?;
@@ -367,6 +385,46 @@ mod tests {
         assert!(emit_witness(&sys, &values).is_err());
         values.remove("v_a");
         assert!(emit_witness(&sys, &values).is_err());
+    }
+
+    #[test]
+    fn bandgap_root_box_reproduces_the_archived_proof_and_rejects_a_missing_root() {
+        let deck = crate::parser::parse_deck(include_str!(
+            "../../benchmarks/sp/04a_ihp_sige_bandgap_trojan_sat.sp"
+        ))
+        .unwrap();
+        let sys = crate::stamp::stamp_deck(&deck).unwrap();
+        let mut hints: Vec<_> = [
+            "vdd=3",
+            "temp_k=300",
+            "deg_ge=0.085",
+            "v_ref=-0.001:0.01",
+            "v_vc1=2.995:3.005",
+            "v_e0=-0.00009:0.00009",
+            "v_ve2=-0.0001:0.0001",
+            "skirk_Q1=0.99:1.01",
+            "skirk_Q2=0.99:1.01",
+            "i_Vsup=-0.001:0.001",
+        ]
+        .into_iter()
+        .map(String::from)
+        .collect();
+        let proof = emit_root_box(&sys, &hints).unwrap();
+        let archived = include_str!("../../lean/SpiceSmtBench/BandgapCertificate.lean");
+        // The exported file includes its own copy of the stamped target.
+        // Compare the coordinate definitions, certificate data and proof body.
+        let body = |s: &str| {
+            s.split_once("private def p0")
+                .unwrap()
+                .1
+                .split_once("end SpiceSmtBench.")
+                .unwrap()
+                .0
+                .replace("Targets.Bench_04a_ihp_sige_bandgap_trojan_sat", "Target")
+        };
+        assert_eq!(body(&proof), body(archived));
+        hints[3] = "v_ref=0.5:0.51".into();
+        assert!(emit_root_box(&sys, &hints).is_err());
     }
 
     #[test]

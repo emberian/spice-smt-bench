@@ -84,4 +84,31 @@ theorem enclose_sound (e : PExpr) (env : Nat → I) (ρ : Nat → ℝ) (h : ∀ 
           | subst v; exact IntervalRat.mem_add (ia ha) (ib hb)
           | subst v; exact IntervalRat.mem_sub (ia ha) (ib hb)
           | subst v; exact IntervalRat.mem_mul (ia ha) (ib hb)
+/-- Successful evaluation on a box certifies continuity there, including the
+nonvanishing side condition at every division in the expression. -/
+theorem enclose_continuous {X : Type*} [TopologicalSpace X] (e : PExpr)
+    (env : Nat → I) (ρ : X → Nat → ℝ) (bound : ∀ x i, ρ x i ∈ env i)
+    (hc : ∀ i, Continuous (fun x => ρ x i)) {v : I} (ok : enclose env e = some v) :
+    Continuous (fun x => e.eval realTF (ρ x)) := by
+  induction e generalizing v with
+  | var i => exact hc i
+  | const => exact continuous_const
+  | neg a ih | exp a ih | softplus a ih =>
+    cases ha : enclose env a with
+    | none => simp [enclose,ha] at ok
+    | some va =>
+      first | exact (ih ha).neg | exact Real.continuous_exp.comp (ih ha)
+            | exact (continuous_const.add (Real.continuous_exp.comp (ih ha))).log (fun x => ne_of_gt (add_pos zero_lt_one (Real.exp_pos _)))
+  | add a b ia ib | sub a b ia ib | mul a b ia ib | div a b ia ib =>
+    cases ha : enclose env a <;> cases hb : enclose env b <;> simp [enclose, ha, hb] at ok
+    first | exact (ia ha).add (ib hb) | exact (ia ha).sub (ib hb) | exact (ia ha).mul (ib hb)
+          | apply (ia ha).div (ib hb)
+            intro x
+            unfold divI at ok
+            split at ok
+            · apply ne_of_gt
+              rename_i hp
+              exact lt_of_lt_of_le (by exact_mod_cast hp) (enclose_sound b env (ρ x) (bound x) hb).1
+            · contradiction
+
 end SpiceSmtBench.RealInterval

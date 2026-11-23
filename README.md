@@ -6,7 +6,7 @@
 
 1. **Pure-`exp` SMT-LIB (`--dialect smt2-exp`)** — uses `ALL` by default, with an explicit `--logic` override. Transients use discrete Backward-Euler or Trapezoidal collocation and test unsafe states at every sample, including time zero. These samples do not establish continuous-time safety.
 2. **Native Continuous-Time ODE SMT2 (`--dialect dreal-ode`)** — `(define-ode flow_1 ...)` + `(forall_t ...)` trajectory reachability queries over explicit nonlinear state-space flows $\dot{x} = C(x)^{-1}(Bu(t) - Gx - i_{\text{nl}}(x))$, including symbolically differentiated drive waveforms, depletion Miller $C_{gd}(v_{dg})$, and MLCC DC-bias derating $C(v)$.
-3. **Lean 4 target specifications (`--dialect lean4` or `emit-lean`)** — all 19 generated propositions have a concrete interpretation over `ℝ`. Nine have complete proofs: the diode clipper (01), FinFET inverter (02), nominal and damaged SRAM (03a, 03b), guarded SiGe bandgap (04b), CMOS latchup (05), RC glitch filter (06), and both PCB microstrips (09a, 09b).
+3. **Lean 4 target specifications (`--dialect lean4` or `emit-lean`)** — all 19 generated propositions have a concrete interpretation over `ℝ`. **14/19 have end-to-end proofs over `ℝ`**. These include both SiGe bandgap decks, the sampled GaN half-bridge and PCB supply-droop envelopes, and both 2nm GAA electrothermal TCAD decks. The suite table records the proof status of each generated proposition.
 
 Numeric literals in both emitters denote the exact shortest-roundtrip decimal rational selected by `src/numeral.rs` from the stamped binary64 AST. Decimal input parsing and constant folding still use binary64 arithmetic. The Rust interval checker encloses exponentials using outward-rounded Taylor arithmetic and repeated squaring; it does not rely on platform transcendental accuracy. Native ODE output uses `QF_NRA_ODE`; DC input to that dialect is algebraic output under `ALL`.
 
@@ -20,7 +20,17 @@ cargo run -- emit-witness benchmarks/sp/03b_asap7_sram_6t_fin_collapse_sat.sp -o
 
 An existing JSON tree can be exported with `verify-paving DECK TREE.json -o TREE.lean`. Each Lean split carries its indexed variable and exact binary64 dyadic. The stamped model constants keep their decimal rational semantics. Lean checks the leaf reason on each sub-box and proves the stamped real proposition.
 
-`emit-witness DECK name=num/den ... -o Witness.lean` accepts exact rational assignments to the parameters and solver variables of algebraic SAT decks. Omitting assignments selects the checked witnesses for 03b and 09b. For an alternative 03b trajectory at the certified damaged-fin corner, pass `--sram-boxes boxes.txt k` before `-o`. Supply 21 rows of four rational voltages (`q.lo q.hi qb.lo qb.hi`) and the zero-based failure sample `k`. The checker proves a simultaneous root of the two backward-Euler residuals at each step. The bundled witness crosses the read threshold by sample 12.
+`emit-witness DECK name=num/den ... -o Witness.lean` accepts exact rational assignments to the parameters and solver variables of algebraic SAT decks. Omitting assignments selects the checked witness for 03b, 04a, 09b or 14b. For an alternative 03b trajectory at the certified damaged-fin corner, pass `--sram-boxes boxes.txt k` before `-o`. Supply 21 rows of four rational voltages (`q.lo q.hi qb.lo qb.hi`) and the zero-based failure sample `k`. The checker proves a simultaneous root of the two backward-Euler residuals at each step. The bundled witness crosses the read threshold by sample 12.
+
+For a square nonlinear DC system, `--root-box` takes fixed decimal values and intervals for the independent coordinates. Rust reconstructs derived variables and pairs residual equations with opposite box faces. Lean checks continuity, the rational enclosures on every face, all stamped variable bounds, and the failure predicate. For example, the seven-coordinate box below proves that the unguarded SiGe circuit has an equilibrium with its reference voltage between −1 mV and 10 mV.
+
+```sh
+cargo run -- emit-witness benchmarks/sp/04a_ihp_sige_bandgap_trojan_sat.sp --root-box \
+  vdd=3 temp_k=300 deg_ge=0.085 v_ref=-0.001:0.01 v_vc1=2.995:3.005 \
+  v_e0=-0.00009:0.00009 v_ve2=-0.0001:0.0001 skirk_Q1=0.99:1.01 \
+  skirk_Q2=0.99:1.01 i_Vsup=-0.001:0.001 -o /tmp/Bandgap.lean
+(cd lean && lake env lean /tmp/Bandgap.lean)
+```
 
 ---
 
@@ -28,7 +38,7 @@ An existing JSON tree can be exported with `verify-paving DECK TREE.json -o TREE
 
 Point simulators (`ngspice`, `Xyce`, `DEVSIM`) and discrete Monte Carlo corner sweeps evaluate **one initial guess at one parameter tuple at a time**:
 
-- **Analog Startup Trojans (`04a` vs `04b`):** Self-biased bandgap and bias generators frequently possess a desired operating point $x^*_{\text{nom}}$ that Newton–Raphson converges to from default seeds—plus a **hidden zero-current Trojan equilibrium** $x^*_{\text{trojan}}$ reachable under slow power-supply ramps or cold-temperature corners. An existential/universal SMT query encodes all equilibria in the supplied continuous parameter and state boxes.
+- **Analog Startup Trojans (`04a` vs `04b`):** Self-biased bandgap and bias generators frequently possess a desired operating point $x^*_{\text{nom}}$ that Newton–Raphson converges to from default seeds—plus a **hidden low-current equilibrium** $x^*_{\text{trojan}}$ reachable under slow power-supply ramps or cold-temperature corners. An existential/universal SMT query encodes all equilibria in the supplied continuous parameter and state boxes.
 - **Anti-Sweep Continuous-Defect PCB Multiphysics (`09a`–`12b`):** High-speed board failures arise from narrow multi-parameter interactions among trapezoidal copper etch undercut $\Delta w_{\text{etch}}$, coupled gap $\Delta s$, prepreg lamination $\Delta h$, FR-4 fiber-weave skew $(\varepsilon_{r,+}, \varepsilon_{r,-})$, split return-plane slot inductance $L_{\text{slot}}$, solder-ball voiding $R_{\text{void}}$, and Class-II MLCC DC-bias capacitance collapse $C(v) = C_0 / (1 + (v/V_{\text{sat}})^2)$. Encoding the manufacturing defect polytope $\mathcal{D}_{\text{fab}} \subset \mathbb{R}^d$ symbolically replaces $10^6$-point grid sweeps with a single universal `UNSAT` proof (or exact `SAT` counterexample recipe).
 - **Sub-10nm Multi-Gate Quantum & Electro-Thermal Couplings (`02`–`03b`, `08`, `13`–`14b`):** In `asap7` 7nm FinFETs and `gt2n` 2nm Gate-All-Around nanosheets, $\pm 0.5\text{ nm}$ fin/sheet thickness roughness shifts ground-subband quantum confinement $\Delta V_{\text{th,QM}} = \frac{\hbar^2 \pi^2}{2 m^* q T_{\text{body}}^2}$ and short-channel scaling length $\lambda$, while buried-oxide thermal resistance $R_{\text{th}}$ creates a coupled transcendental fixed point $T_{\text{ch}} = T_{\text{amb}} + R_{\text{th}} V_{DS} I_{DS}(V_{GS}, V_{DS}, T_{\text{ch}})$.
 
@@ -55,27 +65,29 @@ See [`docs/DESIGN_SPACE.md`](docs/DESIGN_SPACE.md) and [`docs/PCB_AND_TCAD_MODEL
 
 Every unsafe threshold and manufacturing tolerance box is verified non-vacuous in `tests/integration.rs`: all 14 `UNSAT` safety benchmarks have inhabited physical equilibria/trajectories inside their variable boxes, and all 5 `SAT` defect/Trojan twins (`03b`, `04a`, `09b`, `12a`, `14b`) have concrete numerical counterexample witnesses.
 
-| ID | Suite | Deck (`benchmarks/sp/*.sp`) | PDK / Domain | Mode | Expected | Physical Property / Failure Mode |
-| :--- | :---: | :--- | :--- | :---: | :---: | :--- |
-| `01` | A | `01_diode_clipper_pvt.sp` | `gf180mcu` | DC | `unsat` | Shockley ESD diode clipper $v(\text{out}) \le 0.85\text{ V}$ over continuous $(V_{\text{sup}}, V_T)$ box (**proved in Lean 4!**) |
-| `02` | A | `02_asap7_finfet_inverter_snm.sp` | `asap7` | DC | `unsat` | 7nm FinFET CMOS inverter static noise margin under $(\Delta T_{\text{fin}}, \Delta L_g, T)$ variation |
-| `03a` | A | `03a_asap7_sram_6t_fin_etch_unsat.sp` | `asap7` | ODE | `unsat` | Stored-1 six-transistor SRAM read-disturb, 20 backward-Euler steps of 10 ps; $v(q)-v(qb) \ge 0.12$ V |
-| `03b` | A | `03b_asap7_sram_6t_fin_collapse_sat.sp` | `asap7` | ODE | **`sat`** | Same SRAM read-disturb circuit with severe pull-down fin etch and threshold mismatch; $v(q)-v(qb) < 0.12$ V |
-| `04a` | A | `04a_ihp_sige_bandgap_trojan_sat.sp` | `ihp_sg13g2` | DC | **`sat`** | Unguarded SiGe HBT bandgap reference admits hidden zero-current Trojan equilibrium $v(\text{ref}) < 0.15\text{ V}$ |
-| `04b` | A | `04b_ihp_sige_bandgap_guarded_unsat.sp` | `ihp_sg13g2` | DC | `unsat` | Shared PMOS-mirror/area-ratio SiGe core plus startup diode eliminates zero-current Trojan across full PVT + $\Delta E_{g,\text{Ge}}$ box |
-| `05` | A | `05_cmos_scr_latchup_holding.sp` | `gf180mcu` | DC | `unsat` | Guard-ringed pnp/npn SCR: 6–14 Ω well taps, 5–12 Ω substrate taps, 20 Ω emitter ballast; supply 0.70–0.88 V and 273–398 K. Full-box interval UNSAT without a supply-current clamp; unguarded 1.2 V twin latches |
-| `06` | B | `06_rc_diode_glitch_filter_ode.sp` | `gf180mcu` | ODE | `unsat` | Nonlinear RC + ESD diode filter keeps a Gaussian fault-current pulse up to 35 mA below the 1.10 V comparator threshold (proved in Lean) |
-| `07` | B | `07_gan_sic_halfbridge_shootthrough_soa_ode.sp` | `gan_sic` | ODE | `unsat` | 48V GaN-on-SiC half-bridge with depletion Miller feedback, coupled switching/gate states, and sampled gate/current/power SOA guard |
-| `08` | B | `08_gt2n_gaa_ring_oscillator_3stage_ode.sp` | `gt2n` | ODE | `unsat` | 2nm GAA 3-stage ring oscillator with coupled Miller/inner-spacer capacitance; all three stage voltages remain within −0.08–0.83 V at the sampled steps |
-| `09a` | C | `09a_pcb_microstrip_dfm_unsat.sp` | PCB EM | DC | `unsat` | IPC Class-3 5D fab polytope $(\Delta w, \Delta s, \Delta h, t_{\text{cu}}, \varepsilon_r)$ keeps $Z_0 \in [45, 55]\,\Omega \land Z_{\text{diff}} \in [90, 110]\,\Omega$ |
-| `09b` | C | `09b_pcb_microstrip_overetch_sat.sp` | PCB EM | DC | **`sat`** | Over-etched copper + thick prepreg defect corner violates $Z_0 > 56\,\Omega$ impedance envelope |
-| `10` | C | `10_pcb_coupled_trace_esd_crosstalk_ode.sp` | `gf180mcu` + PCB | ODE | `unsat` | Coupled differential trace + fiber-weave skew + via stub + receiver ESD clamp crosstalk limit |
-| `11` | C | `11_pcb_pdn_mlcc_derating_droop_ode.sp` | PCB PDN | ODE | `unsat` | Voltage-derated Class-II MLCC $C(v)$ + BGA solder-void $R_{\text{void}}$ transient PDN droop envelope |
-| `12a` | C | `12a_pcb_split_plane_slot_emi_sat.sp` | PCB signal integrity | ODE | **`sat`** | Split return-plane slot inductance $L_{\text{slot}}$ + fiber-weave skew induces $> 0.025\text{ V}$ ground bounce |
-| `12b` | C | `12b_pcb_stitched_return_fence_unsat.sp` | PCB signal integrity | ODE | `unsat` | Stitched return-via fence keeps sampled receiver ground bounce within ±25 mV across the weave-skew box; no radiated-EMI claim |
-| `13` | D | `13_asap7_finfet_2d_poisson_qconfinement.sp` | `asap7` 2D TCAD | DC | `unsat` | 7nm $5\times 3$ 2D cross-section FinFET Poisson + quantum confinement + SG off-state DIBL leakage limit of 10 pA/µm |
-| `14a` | D | `14a_gt2n_gaa_nanosheet_electrothermal_unsat.sp` | `gt2n` TCAD | DC | `unsat` | 2nm 3-sheet GAA nanosheet coupled electro-thermal fixed point stays $\le 410\text{ K}$ over nominal $R_{\text{th}}$ |
-| `14b` | D | `14b_gt2n_gaa_nanosheet_thermal_runaway_sat.sp` | `gt2n` TCAD | DC | **`sat`** | Degraded buried-oxide $R_{\text{th}}$ + overdrive triggers coupled electro-thermal excursion $T_{\text{ch}} > 410\text{ K}$ |
+| ID | Suite | Deck (`benchmarks/sp/*.sp`) | PDK / Domain | Mode | Expected | Lean over ℝ | Physical Property / Failure Mode |
+| :--- | :---: | :--- | :--- | :---: | :---: | :---: | :--- |
+| `01` | A | `01_diode_clipper_pvt.sp` | `gf180mcu` | DC | `unsat` | Proved | Shockley ESD diode clipper $v(\text{out}) \le 0.85\text{ V}$ over continuous $(V_{\text{sup}}, V_T)$ box |
+| `02` | A | `02_asap7_finfet_inverter_snm.sp` | `asap7` | DC | `unsat` | Proved | 7nm FinFET CMOS inverter static noise margin under $(\Delta T_{\text{fin}}, \Delta L_g, T)$ variation |
+| `03a` | A | `03a_asap7_sram_6t_fin_etch_unsat.sp` | `asap7` | ODE | `unsat` | Proved | Stored-1 six-transistor SRAM read-disturb, 20 backward-Euler steps of 10 ps; $v(q)-v(qb) \ge 0.12$ V |
+| `03b` | A | `03b_asap7_sram_6t_fin_collapse_sat.sp` | `asap7` | ODE | **`sat`** | Proved | Same SRAM read-disturb circuit with severe pull-down fin etch and threshold mismatch; $v(q)-v(qb) < 0.12$ V |
+| `04a` | A | `04a_ihp_sige_bandgap_trojan_sat.sp` | `ihp_sg13g2` | DC | **`sat`** | Proved | Unguarded SiGe HBT bandgap reference admits hidden low-current equilibrium $v(\text{ref}) < 0.15\text{ V}$ |
+| `04b` | A | `04b_ihp_sige_bandgap_guarded_unsat.sp` | `ihp_sg13g2` | DC | `unsat` | Proved | Shared PMOS-mirror/area-ratio SiGe core plus startup diode eliminates the low-reference equilibrium across full PVT + $\Delta E_{g,\text{Ge}}$ box |
+| `05` | A | `05_cmos_scr_latchup_holding.sp` | `gf180mcu` | DC | `unsat` | Proved | Guard-ringed pnp/npn SCR: 6–14 Ω well taps, 5–12 Ω substrate taps, 20 Ω emitter ballast; supply 0.70–0.88 V and 273–398 K. Full-box interval UNSAT without a supply-current clamp; unguarded 1.2 V twin latches |
+| `06` | B | `06_rc_diode_glitch_filter_ode.sp` | `gf180mcu` | ODE | `unsat` | Proved | Nonlinear RC + ESD diode filter keeps a Gaussian fault-current pulse up to 35 mA below the 1.10 V comparator threshold |
+| `07` | B | `07_gan_sic_halfbridge_shootthrough_soa_ode.sp` | `gan_sic` | ODE | `unsat` | Proved | 48V GaN-on-SiC half-bridge with depletion Miller feedback, coupled switching/gate states, and sampled gate/current/power SOA guard |
+| `08` | B | `08_gt2n_gaa_ring_oscillator_3stage_ode.sp` | `gt2n` | ODE | `unsat` | Open | 2nm GAA 3-stage ring oscillator with coupled Miller/inner-spacer capacitance; all three stage voltages remain within −0.08–0.83 V at the sampled steps |
+| `09a` | C | `09a_pcb_microstrip_dfm_unsat.sp` | PCB EM | DC | `unsat` | Proved | IPC Class-3 5D fab polytope $(\Delta w, \Delta s, \Delta h, t_{\text{cu}}, \varepsilon_r)$ keeps $Z_0 \in [45, 55]\,\Omega \land Z_{\text{diff}} \in [90, 110]\,\Omega$ |
+| `09b` | C | `09b_pcb_microstrip_overetch_sat.sp` | PCB EM | DC | **`sat`** | Proved | Over-etched copper + thick prepreg defect corner violates $Z_0 > 56\,\Omega$ impedance envelope |
+| `10` | C | `10_pcb_coupled_trace_esd_crosstalk_ode.sp` | `gf180mcu` + PCB | ODE | `unsat` | Open | Coupled differential trace + fiber-weave skew + via stub + receiver ESD clamp crosstalk limit |
+| `11` | C | `11_pcb_pdn_mlcc_derating_droop_ode.sp` | PCB PDN | ODE | `unsat` | Proved | Voltage-derated Class-II MLCC $C(v)$ + BGA solder-void $R_{\text{void}}$ transient PDN droop envelope |
+| `12a` | C | `12a_pcb_split_plane_slot_emi_sat.sp` | PCB signal integrity | ODE | **`sat`** | Open | Split return-plane slot inductance $L_{\text{slot}}$ + fiber-weave skew induces $> 0.025\text{ V}$ ground bounce |
+| `12b` | C | `12b_pcb_stitched_return_fence_unsat.sp` | PCB signal integrity | ODE | `unsat` | Open | Stitched return-via fence keeps sampled receiver ground bounce within ±25 mV across the weave-skew box; no radiated-EMI claim |
+| `13` | D | `13_asap7_finfet_2d_poisson_qconfinement.sp` | `asap7` 2D TCAD | DC | `unsat` | Open | 7nm $5\times 3$ 2D cross-section FinFET Poisson + quantum confinement + SG off-state DIBL leakage limit of 10 pA/µm |
+| `14a` | D | `14a_gt2n_gaa_nanosheet_electrothermal_unsat.sp` | `gt2n` TCAD | DC | `unsat` | Proved | 2nm 3-sheet GAA nanosheet coupled electro-thermal fixed point stays $\le 410\text{ K}$ over nominal $R_{\text{th}}$ |
+| `14b` | D | `14b_gt2n_gaa_nanosheet_thermal_runaway_sat.sp` | `gt2n` TCAD | DC | **`sat`** | Proved | Degraded buried-oxide $R_{\text{th}}$ + overdrive triggers coupled electro-thermal excursion $T_{\text{ch}} > 410\text{ K}$ |
+
+For open target 13, Lean checks a nine-cell Poisson supersolution, the Scharfetter–Gummel conductance bound on two interior edges, and the resulting series-current limit. The remaining step is to derive their hypotheses from the generated FinFET stamp. [Mesh comparison](lean/SpiceSmtBench/FinMesh.lean) · [Transport bounds](lean/SpiceSmtBench/FinTransport.lean)
 
 ---
 
@@ -128,6 +140,7 @@ The workspace pins Lean 4.35, Mathlib, LeanCert rational Taylor bounds, and Brou
 cd lean
 lake exe cache get
 lake build
+lake env lean Audit.lean
 ```
 
 Key Lean 4 modules:

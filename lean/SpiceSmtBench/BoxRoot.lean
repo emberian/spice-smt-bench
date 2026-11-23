@@ -13,6 +13,26 @@ private theorem clamp_fixed {l h x r : ℝ} (lh : l ≤ h)
     · rw [max_eq_right hd] at hf; linarith
     · rw [max_eq_left hd] at hf; linarith [hl hf.symm]
 
+/-- Poincaré–Miranda on a finite-dimensional closed box. Weak signs also
+cover zero-width coordinates, for which both face obligations apply. -/
+theorem box_root {n : Nat} (lo hi : Fin n → ℝ) (h : lo ≤ hi)
+    (f : (Fin n → ℝ) → Fin n → ℝ) (hc : ContinuousOn f (Set.Icc lo hi))
+    (lower : ∀ x ∈ Set.Icc lo hi, ∀ i, x i = lo i → f x i ≤ 0)
+    (upper : ∀ x ∈ Set.Icc lo hi, ∀ i, x i = hi i → 0 ≤ f x i) :
+    ∃ x ∈ Set.Icc lo hi, f x = 0 := by
+  let box := Set.Icc lo hi
+  let step (x : box) (i : Fin n) := max (lo i) (min (hi i) (x.val i - f x.val i))
+  have hf := continuousOn_iff_continuous_domRestrict.mp hc
+  have cont : Continuous step := continuous_pi fun i => continuous_const.max
+    (continuous_const.min (((continuous_apply i).comp continuous_subtype_val).sub
+      ((continuous_apply i).comp hf)))
+  have inside (x : box) : step x ∈ box :=
+    ⟨fun _ => le_max_left .., fun i => max_le (h i) (min_le_left ..)⟩
+  let update : C(box, box) := ⟨fun x => ⟨step x, inside x⟩, cont.subtype_mk inside⟩
+  obtain ⟨x, fix⟩ := brouwer_fixed_point box (convex_Icc ..) isCompact_Icc ⟨lo,le_rfl,h⟩ update
+  exact ⟨x, x.property, funext fun i => clamp_fixed (h i) (lower x x.property i)
+    (upper x x.property i) (congrArg (fun y : box => y.val i) fix)⟩
+
 /-- A continuous pair of residuals has a simultaneous zero if each component
 has opposite weak signs on the two corresponding faces of a closed rectangle. -/
 theorem rectangle_root (lo hi : ℝ × ℝ) (h : lo ≤ hi) (f : ℝ × ℝ → ℝ × ℝ)

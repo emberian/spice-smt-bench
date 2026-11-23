@@ -1,4 +1,9 @@
 import Mathlib.Analysis.Complex.ExponentialBounds
+import SpiceSmtBench.BandgapCertificate
+import SpiceSmtBench.GanCertificate
+import SpiceSmtBench.PdnCertificate
+import SpiceSmtBench.GaaCertificate
+import SpiceSmtBench.GaaSafety
 import SpiceSmtBench.RealPhysics
 import SpiceSmtBench.SramReplay
 import SpiceSmtBench.IntervalCheck
@@ -11,10 +16,14 @@ import SpiceSmtBench.PcbCertificate
 Re-exports all 19 auto-generated SPICE / Multi-PDK / PCB / TCAD benchmark `Prop` definitions
 from `SpiceSmtBench.TargetsGenerated` and provides complete end-to-end machine-checked proofs:
 
-The proved decks cover the diode clipper (01), FinFET inverter (02), nominal and damaged FinFET SRAM
-(03a, 03b), the guarded SiGe bandgap (04b), the guarded SCR (05), the RC glitch filter (06), and both PCB
-microstrip tolerances (09a, 09b). RealPhysics supplies the real instance for
-all nine. The bandgap lemmas below concern individual circuit components.
+Fourteen of the nineteen generated targets have end-to-end proofs over `ℝ` via `realTF`.
+
+| Generated query | Proved over ℝ | Open |
+| --- | --- | --- |
+| UNSAT safety | 01, 02, 03a, 04b, 05, 06, 07, 09a, 11, 14a | 08, 10, 12b, 13 |
+| SAT violation | 03b, 04a, 09b, 14b | 12a |
+
+Transient targets quantify over the integration samples in the generated stamps.
 -/
 
 namespace SpiceSmtBench.Targets
@@ -865,5 +874,21 @@ theorem bench04b_sige_bandgap_guarded_proved : Bench_04b_ihp_sige_bandgap_guarde
 /-- A damaged pull-down fin admits a 20-step trajectory violating the read margin at 120 ps. -/
 theorem bench03b_asap7_sram_fin_collapse_proved : Bench_03b_asap7_sram_6t_fin_collapse_sat realTF :=
   SramTrajectory.collapse_of_faces SramTrajectory.checkedFaces
+
+/-- A seven-coordinate box contains a low-reference equilibrium at 300 K. -/
+theorem bench04a_sige_bandgap_trojan_proved : Bench_04a_ihp_sige_bandgap_trojan_sat realTF :=
+  BandgapCertificate.certified
+
+theorem bench07_gan_soa_proved : Bench_07_gan_sic_halfbridge_shootthrough_soa_ode realTF :=
+  GanCertificate.certified
+
+theorem bench11_pdn_droop_proved : Bench_11_pcb_pdn_mlcc_derating_droop_ode realTF :=
+  PdnCertificate.certified
+
+theorem bench14a_gaa_thermal_safety_proved : Bench_14a_gt2n_gaa_nanosheet_electrothermal_unsat realTF :=
+  GaaSafety.certified
+
+theorem bench14b_gaa_thermal_excursion_proved : Bench_14b_gt2n_gaa_nanosheet_thermal_runaway_sat realTF :=
+  GaaCertificate.certified
 
 end SpiceSmtBench.Targets

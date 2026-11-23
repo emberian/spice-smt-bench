@@ -17,6 +17,7 @@ USAGE:
   spice2smt emit-lean <deck.sp> [--name <Def>] [--pdk <profile>] [-o <out.lean>]
   spice2smt generate-paving <deck.sp> <variable=mid>... -o <certificate.json|certificate.lean>
   spice2smt emit-witness <deck.sp> <variable=num/den>... -o <witness.lean>
+  spice2smt emit-witness <dc.sp> --root-box <name=lo:hi|name=value>... -o <witness.lean>
   spice2smt emit-witness <03b.sp> --sram-boxes <samples.txt> <failure-step> -o <witness.lean>
   spice2smt verify-paving <deck.sp> <paving.json> [-o <certificate.lean>]
   spice2smt list-pdks
@@ -73,39 +74,58 @@ fn run() -> Result<(), String> {
             let system = stamp::stamp_deck(&parser::parse_deck(&source)?)?;
             let mut splits = Vec::new();
             for hint in &args[2..args.len() - 2] {
-                let (variable, midpoint) = hint.split_once('=').ok_or("expected variable=midpoint")?;
+                let (variable, midpoint) =
+                    hint.split_once('=').ok_or("expected variable=midpoint")?;
                 splits.push((variable.to_string(), parser::parse_spice_number(midpoint)?));
             }
             let certificate = paving::generate_paving(&system, &splits)?;
-            let path = &args[args.len()-1];
-            let output = if path.ends_with(".lean") { paving::lean::emit_paving(&system, &certificate)? }
-                else { format!("{}\n", certificate.to_json()) };
+            let path = &args[args.len() - 1];
+            let output = if path.ends_with(".lean") {
+                paving::lean::emit_paving(&system, &certificate)?
+            } else {
+                format!("{}\n", certificate.to_json())
+            };
             fs::write(path, output).map_err(|e| e.to_string())?;
             Ok(())
         }
         "emit-witness" => {
-            if args.len() < 4 || args[args.len()-2] != "-o" {
-                return Err("usage: emit-witness <deck.sp> <variable=num/den>... -o <witness.lean>".into());
+            if args.len() < 4 || args[args.len() - 2] != "-o" {
+                return Err(
+                    "usage: emit-witness <deck.sp> <variable=num/den>... -o <witness.lean>".into(),
+                );
             }
             let source = fs::read_to_string(&args[1]).map_err(|e| e.to_string())?;
             let sys = stamp::stamp_deck(&parser::parse_deck(&source)?)?;
+            if args[2] == "--root-box" {
+                let proof = paving::lean::emit_root_box(&sys, &args[3..args.len() - 2])?;
+                return fs::write(&args[args.len() - 1], proof).map_err(|e| e.to_string());
+            }
             if args.get(2).map(String::as_str) == Some("--sram-boxes") {
                 if args.len() != 7 {
-                    return Err("expected --sram-boxes <samples.txt> <failure-step> -o <witness.lean>".into());
+                    return Err(
+                        "expected --sram-boxes <samples.txt> <failure-step> -o <witness.lean>"
+                            .into(),
+                    );
                 }
                 let rows = fs::read_to_string(&args[3]).map_err(|e| e.to_string())?;
-                let failure = args[4].parse().map_err(|_| "expected integer failure step")?;
+                let failure = args[4]
+                    .parse()
+                    .map_err(|_| "expected integer failure step")?;
                 let certificate = paving::lean::emit_sram_boxes(&sys, &rows, failure)?;
                 return fs::write(&args[6], certificate).map_err(|e| e.to_string());
             }
             let mut values = std::collections::BTreeMap::new();
-            for binding in &args[2..args.len()-2] {
+            for binding in &args[2..args.len() - 2] {
                 let (name, value) = binding.split_once('=').ok_or("expected variable=value")?;
-                if values.insert(name.to_owned(),value.to_owned()).is_some() {
+                if values.insert(name.to_owned(), value.to_owned()).is_some() {
                     return Err(format!("duplicate witness for {name}"));
                 }
             }
-            fs::write(&args[args.len()-1], paving::lean::emit_witness(&sys, &values)?).map_err(|e| e.to_string())
+            fs::write(
+                &args[args.len() - 1],
+                paving::lean::emit_witness(&sys, &values)?,
+            )
+            .map_err(|e| e.to_string())
         }
         "verify-paving" => {
             if args.len() != 3 && !(args.len() == 5 && args[3] == "-o") {
@@ -235,9 +255,8 @@ fn run() -> Result<(), String> {
                     let sys =
                         stamp::stamp_deck(&deck).map_err(|e| format!("{}: {e}", path.display()))?;
                     let def_name = format!("Bench_{stem}");
-                    lean_bundle.push_str(&spice2smt::emit_lean::emit_lean_def(
-                        &sys, &def_name, false,
-                    ));
+                    lean_bundle
+                        .push_str(&spice2smt::emit_lean::emit_lean_def(&sys, &def_name, false));
                     lean_bundle.push('\n');
                 }
             }
@@ -249,19 +268,28 @@ fn run() -> Result<(), String> {
                             .map_err(|e| format!("mkdir {}: {e}", parent.display()))?;
                     }
                 }
-                fs::write(dst, lean_bundle)
-                    .map_err(|e| format!("write {}: {e}", dst.display()))?;
+                fs::write(dst, lean_bundle).map_err(|e| format!("write {}: {e}", dst.display()))?;
             }
-            println!("Compiled {} benchmark decks from {}", entries.len(), sp_dir.display());
+            println!(
+                "Compiled {} benchmark decks from {}",
+                entries.len(),
+                sp_dir.display()
+            );
             Ok(())
         }
         _ => {
             let lean_alias = args[0] == "emit-lean";
-            let start = if args[0] == "compile" || lean_alias { 1 } else { 0 };
-            let sp_path = args
-                .get(start)
-                .ok_or("missing input `<deck.sp>` path")?;
-            let mut dialect = if lean_alias { Dialect::Lean4 } else { Dialect::Smt2Exp };
+            let start = if args[0] == "compile" || lean_alias {
+                1
+            } else {
+                0
+            };
+            let sp_path = args.get(start).ok_or("missing input `<deck.sp>` path")?;
+            let mut dialect = if lean_alias {
+                Dialect::Lean4
+            } else {
+                Dialect::Smt2Exp
+            };
             let mut pdk_override: Option<PdkId> = None;
             let mut def_name: Option<String> = None;
             let mut logic_override: Option<String> = None;
@@ -278,9 +306,8 @@ fn run() -> Result<(), String> {
                     "--pdk" => {
                         i += 1;
                         let val = args.get(i).ok_or("missing value after --pdk")?;
-                        pdk_override = Some(
-                            PdkId::parse(val).ok_or_else(|| format!("unknown PDK `{val}`"))?,
-                        );
+                        pdk_override =
+                            Some(PdkId::parse(val).ok_or_else(|| format!("unknown PDK `{val}`"))?);
                     }
                     "--logic" => {
                         i += 1;
@@ -292,17 +319,12 @@ fn run() -> Result<(), String> {
                     }
                     "--name" => {
                         i += 1;
-                        def_name = Some(
-                            args.get(i)
-                                .ok_or("missing value after --name")?
-                                .to_string(),
-                        );
+                        def_name =
+                            Some(args.get(i).ok_or("missing value after --name")?.to_string());
                     }
                     "-o" | "--output" => {
                         i += 1;
-                        out_path = Some(PathBuf::from(
-                            args.get(i).ok_or("missing path after -o")?,
-                        ));
+                        out_path = Some(PathBuf::from(args.get(i).ok_or("missing path after -o")?));
                     }
                     other => return Err(format!("unknown flag `{other}`")),
                 }
@@ -322,7 +344,11 @@ fn run() -> Result<(), String> {
                 &src,
                 dialect,
                 pdk_override,
-                if dialect == Dialect::Lean4 { Some(def_name.as_deref().unwrap_or(default_stem)) } else { None },
+                if dialect == Dialect::Lean4 {
+                    Some(def_name.as_deref().unwrap_or(default_stem))
+                } else {
+                    None
+                },
                 logic_override.as_deref(),
             )?;
             if let Some(dst) = out_path {
