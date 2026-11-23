@@ -1,5 +1,6 @@
 import Mathlib.Analysis.Complex.ExponentialBounds
 import SpiceSmtBench.BandgapCertificate
+import SpiceSmtBench.RingCertificate
 import SpiceSmtBench.FinCertificate
 import SpiceSmtBench.GanCertificate
 import SpiceSmtBench.PdnCertificate
@@ -17,11 +18,11 @@ import SpiceSmtBench.PcbCertificate
 Re-exports all 19 auto-generated SPICE / Multi-PDK / PCB / TCAD benchmark `Prop` definitions
 from `SpiceSmtBench.TargetsGenerated` and provides complete end-to-end machine-checked proofs:
 
-Fifteen of the nineteen generated targets have end-to-end proofs over `ℝ` via `realTF`.
+Sixteen of the nineteen generated targets have end-to-end proofs over `ℝ` via `realTF`.
 
 | Generated query | Proved over ℝ | Open |
 | --- | --- | --- |
-| UNSAT safety | 01, 02, 03a, 04b, 05, 06, 07, 09a, 11, 13, 14a | 08, 10, 12b |
+| UNSAT safety | 01, 02, 03a, 04b, 05, 06, 07, 08, 09a, 11, 13, 14a | 10, 12b |
 | SAT violation | 03b, 04a, 09b, 14b | 12a |
 
 Transient targets quantify over the integration samples in the generated stamps.
@@ -891,6 +892,10 @@ theorem bench14a_gaa_thermal_safety_proved : Bench_14a_gt2n_gaa_nanosheet_electr
 
 theorem bench14b_gaa_thermal_excursion_proved : Bench_14b_gt2n_gaa_nanosheet_thermal_runaway_sat realTF :=
   GaaCertificate.certified
+
+/-- The trapezoidal trajectory stays within the rail envelope at all 41 samples. -/
+theorem bench08_ring_envelope_proved : Bench_08_gt2n_gaa_ring_oscillator_3stage_ode realTF :=
+  RingCertificate.certified
 
 /-- The wrapped 5 × 3 FinFET stays within 10 pA/µm over its full process box. -/
 theorem bench13_finfet_leakage_proved : Bench_13_asap7_finfet_2d_poisson_qconfinement realTF :=
