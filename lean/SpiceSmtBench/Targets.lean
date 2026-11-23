@@ -1,4 +1,5 @@
 import Mathlib.Analysis.Complex.ExponentialBounds
+import SpiceSmtBench.CrosstalkCertificate
 import SpiceSmtBench.BandgapCertificate
 import SpiceSmtBench.SlotCertificate
 import SpiceSmtBench.RingCertificate
@@ -19,11 +20,11 @@ import SpiceSmtBench.PcbCertificate
 Re-exports all 19 auto-generated SPICE / Multi-PDK / PCB / TCAD benchmark `Prop` definitions
 from `SpiceSmtBench.TargetsGenerated` and provides complete end-to-end machine-checked proofs:
 
-Seventeen of the nineteen generated targets have end-to-end proofs over `ℝ` via `realTF`.
+Eighteen of the nineteen generated targets have end-to-end proofs over `ℝ` via `realTF`.
 
 | Generated query | Proved over ℝ | Open |
 | --- | --- | --- |
-| UNSAT safety | 01, 02, 03a, 04b, 05, 06, 07, 08, 09a, 11, 13, 14a | 10, 12b |
+| UNSAT safety | 01, 02, 03a, 04b, 05, 06, 07, 08, 09a, 10, 11, 13, 14a | 12b |
 | SAT violation | 03b, 04a, 09b, 12a, 14b | — |
 
 Transient targets quantify over the integration samples in the generated stamps.
@@ -905,5 +906,9 @@ theorem bench13_finfet_leakage_proved : Bench_13_asap7_finfet_2d_poisson_qconfin
 /-- The split-plane trajectory crosses the 25 mV receiver ground-bounce threshold. -/
 theorem bench12a_split_plane_bounce_proved : Bench_12a_pcb_split_plane_slot_emi_sat realTF :=
   SlotLine.certified
+
+/-- The receiver stays between the two ESD limits throughout the sampled transient. -/
+theorem bench10_esd_crosstalk_proved : Bench_10_pcb_coupled_trace_esd_crosstalk_ode realTF :=
+  Crosstalk.certified
 
 end SpiceSmtBench.Targets
