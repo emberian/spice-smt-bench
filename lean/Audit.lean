@@ -32,6 +32,7 @@ private theorem bench09a_pcb_microstrip_dfm_proved_real : Bench_09a_pcb_microstr
 #print axioms bench10_esd_crosstalk_proved
 #print axioms bench11_pdn_droop_proved
 #print axioms bench12a_split_plane_bounce_proved
+#print axioms bench12b_stitched_return_proved
 #print axioms bench13_finfet_leakage_proved
 #print axioms bench14a_gaa_thermal_safety_proved
 #print axioms bench14b_gaa_thermal_excursion_proved

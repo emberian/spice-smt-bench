@@ -1,4 +1,5 @@
 import Mathlib.Analysis.Complex.ExponentialBounds
+import SpiceSmtBench.StitchedCertificate
 import SpiceSmtBench.CrosstalkCertificate
 import SpiceSmtBench.BandgapCertificate
 import SpiceSmtBench.SlotCertificate
@@ -17,15 +18,13 @@ import SpiceSmtBench.PcbCertificate
 /-!
 # Benchmark Target Specifications & Machine-Checked Proofs
 
-Re-exports all 19 auto-generated SPICE / Multi-PDK / PCB / TCAD benchmark `Prop` definitions
-from `SpiceSmtBench.TargetsGenerated` and provides complete end-to-end machine-checked proofs:
+All 19 generated benchmark propositions in `SpiceSmtBench.TargetsGenerated`
+have end-to-end proofs over `ℝ` under `realTF`.
 
-Eighteen of the nineteen generated targets have end-to-end proofs over `ℝ` via `realTF`.
-
-| Generated query | Proved over ℝ | Open |
-| --- | --- | --- |
-| UNSAT safety | 01, 02, 03a, 04b, 05, 06, 07, 08, 09a, 10, 11, 13, 14a | 12b |
-| SAT violation | 03b, 04a, 09b, 12a, 14b | — |
+| Generated query | Proved targets |
+| --- | --- |
+| UNSAT safety | 01, 02, 03a, 04b, 05, 06, 07, 08, 09a, 10, 11, 12b, 13, 14a |
+| SAT violation | 03b, 04a, 09b, 12a, 14b |
 
 Transient targets quantify over the integration samples in the generated stamps.
 -/
@@ -910,5 +909,9 @@ theorem bench12a_split_plane_bounce_proved : Bench_12a_pcb_split_plane_slot_emi_
 /-- The receiver stays between the two ESD limits throughout the sampled transient. -/
 theorem bench10_esd_crosstalk_proved : Bench_10_pcb_coupled_trace_esd_crosstalk_ode realTF :=
   Crosstalk.certified
+
+/-- The stitched receiver reference stays within 25 mV through all 80 time steps. -/
+theorem bench12b_stitched_return_proved : Bench_12b_pcb_stitched_return_fence_unsat realTF :=
+  Stitched.certified
 
 end SpiceSmtBench.Targets

@@ -74,6 +74,10 @@ For a differential pair over glass/epoxy weave, the $+$ and $-$ legs experience 
 - Edge proximity coupling factor $k_c = \exp\!\left(-1.9\,\frac{s_0 + \Delta s_{\text{etch}}}{h}\right)$ determines differential impedance $Z_{\text{diff}} = (Z_{0,+} + Z_{0,-})\sqrt{(1-k_c)/(1+k_c)}$, mutual capacitance $C_m$, and inductive coupling.
 - When a differential pair crosses a split reference-plane gap (`12a`), return current detours around the slot inductance $L_{\text{slot}} \in [3.5, 6.0]\text{ nH}$, elevating receiver reference bounce $v(\text{gnd\_rx})$ above logic noise margins unless shunted by stitching vias (`12b`).
 
+The sampled ESD proof for `10` bounds the far-end victim voltage between −0.75 V and +0.65 V across all five backward-Euler steps. It recovers the physical capacitance and inductance matrices from the emitted derivatives. The receiver clamp dissipates error relative to a reference trajectory, and a rational residual bound controls the remaining stored energy. [ESD proof](../lean/SpiceSmtBench/CrosstalkBounds.lean)
+
+The two return-path decks share a 25 mV threshold. For `12a`, the certified split-plane trajectory reaches at least 70 mV at sample 53 (530 ps). For `12b`, a quadratic reference in the two trace capacitances and the return inductance covers the fabrication box. Lean bounds the residual of each trapezoidal step and proves that the receiver reference stays strictly within ±25 mV at every sample from 0 through 80. [Split-plane witness](../lean/SpiceSmtBench/SlotCertificate.lean) · [Stitched-return proof](../lean/SpiceSmtBench/StitchedBounds.lean)
+
 ---
 
 ## 4. 2D Multi-Gate FinFET & Coupled Electro-Thermal 2nm GAA TCAD (`Suite D`)
