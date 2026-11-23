@@ -82,7 +82,11 @@ struct AlgebraicBuilder {
 }
 
 impl AlgebraicBuilder {
-    fn new(default_vbound: (f64, f64), explicit_bounds: BTreeMap<String, (f64, f64)>, params: &[ParamDecl]) -> Self {
+    fn new(
+        default_vbound: (f64, f64),
+        explicit_bounds: BTreeMap<String, (f64, f64)>,
+        params: &[ParamDecl],
+    ) -> Self {
         Self {
             default_vbound,
             explicit_bounds,
@@ -91,7 +95,10 @@ impl AlgebraicBuilder {
             constraints: Vec::new(),
             kcl_outflow: BTreeMap::new(),
             softplus_counter: 0,
-            parameter_box: params.iter().map(|p| (p.name.clone(), crate::paving::Iv {lo: p.lo, hi: p.hi})).collect(),
+            parameter_box: params
+                .iter()
+                .map(|p| (p.name.clone(), crate::paving::Iv { lo: p.lo, hi: p.hi }))
+                .collect(),
         }
     }
 
@@ -107,7 +114,14 @@ impl AlgebraicBuilder {
         self.seen_vars.insert(name.to_string());
         self.vars.push(StampedVar {
             name: name.to_string(),
-            bounds: if name.starts_with("v_") || name.starts_with("psi_") || name.starts_with("phin_") { Some((lo, hi)) } else { self.explicit_bounds.get(name).copied() },
+            bounds: if name.starts_with("v_")
+                || name.starts_with("psi_")
+                || name.starts_with("phin_")
+            {
+                Some((lo, hi))
+            } else {
+                self.explicit_bounds.get(name).copied()
+            },
             comment: comment.into(),
         });
     }
@@ -204,7 +218,12 @@ impl AlgebraicBuilder {
             Expr::Sqrt(a) => {
                 let r = self.lower_expr(a, tag);
                 self.softplus_counter += 1;
-                self.positive_sqrt(&format!("r_sqrt_{tag}_{}", self.softplus_counter), (0.0, 1.0), r, "Expression square root")
+                self.positive_sqrt(
+                    &format!("r_sqrt_{tag}_{}", self.softplus_counter),
+                    (0.0, 1.0),
+                    r,
+                    "Expression square root",
+                )
             }
             Expr::Ln1pExp(a) => {
                 let z = self.lower_expr(a, tag);
@@ -220,18 +239,12 @@ impl AlgebraicBuilder {
                 lhs: self.lower_expr(lhs, tag),
                 rhs: self.lower_expr(rhs, tag),
             },
-            Formula::And(items) => Formula::And(
-                items
-                    .iter()
-                    .map(|it| self.lower_formula(it, tag))
-                    .collect(),
-            ),
-            Formula::Or(items) => Formula::Or(
-                items
-                    .iter()
-                    .map(|it| self.lower_formula(it, tag))
-                    .collect(),
-            ),
+            Formula::And(items) => {
+                Formula::And(items.iter().map(|it| self.lower_formula(it, tag)).collect())
+            }
+            Formula::Or(items) => {
+                Formula::Or(items.iter().map(|it| self.lower_formula(it, tag)).collect())
+            }
             Formula::Not(inner) => Formula::Not(Box::new(self.lower_formula(inner, tag))),
         }
     }
@@ -249,7 +262,12 @@ impl AlgebraicBuilder {
         }
         self.ensure_var(var_name, bounds, desc.to_string());
         let s = Expr::var(var_name);
-        self.add_cmp("Nonnegative square root", CmpOp::Ge, s.clone(), Expr::num(0.0));
+        self.add_cmp(
+            "Nonnegative square root",
+            CmpOp::Ge,
+            s.clone(),
+            Expr::num(0.0),
+        );
         self.add_eq(
             format!("Algebraic sqrt constraint {var_name}^2 = radicand ({desc})"),
             Expr::sq(s.clone()),
@@ -280,7 +298,17 @@ fn model_param(m: &ModelDecl, key: &str, default: f64) -> Expr {
 
 fn nonlinear_cap(c0: Expr, cmin: Expr, vsat: Expr, voltage: Expr, depletion: bool) -> Expr {
     let denominator = Expr::add(Expr::num(1.0), Expr::sq(Expr::div(voltage, vsat)));
-    Expr::add(cmin, Expr::div(c0, if depletion { Expr::sqrt(denominator) } else { denominator }))
+    Expr::add(
+        cmin,
+        Expr::div(
+            c0,
+            if depletion {
+                Expr::sqrt(denominator)
+            } else {
+                denominator
+            },
+        ),
+    )
 }
 
 /// Temperature-dependent saturation current; energies in eV and thermal voltage in V.
@@ -288,10 +316,25 @@ fn temperature_is(area: Expr, is0: Expr, n: Expr, vt: Expr, temp: Option<Expr>, 
     let scale = Expr::mul(area, is0);
     if let Some(t) = temp {
         let ratio = Expr::div(t, Expr::num(300.0));
-        let activation = Expr::sub(Expr::div(Expr::num(1.12), Expr::mul(n.clone(), Expr::num(KB_OVER_Q * 300.0))),
-            Expr::div(Expr::sub(Expr::num(1.12), deg), Expr::mul(n, vt)));
-        Expr::mul(scale, Expr::mul(Expr::mul(Expr::sq(ratio.clone()), ratio), Expr::exp(activation)))
-    } else if matches!(deg, Expr::Num(0.0)) { scale } else { Expr::mul(scale, Expr::exp(Expr::div(deg, Expr::mul(n, vt)))) }
+        let activation = Expr::sub(
+            Expr::div(
+                Expr::num(1.12),
+                Expr::mul(n.clone(), Expr::num(KB_OVER_Q * 300.0)),
+            ),
+            Expr::div(Expr::sub(Expr::num(1.12), deg), Expr::mul(n, vt)),
+        );
+        Expr::mul(
+            scale,
+            Expr::mul(
+                Expr::mul(Expr::sq(ratio.clone()), ratio),
+                Expr::exp(activation),
+            ),
+        )
+    } else if matches!(deg, Expr::Num(0.0)) {
+        scale
+    } else {
+        Expr::mul(scale, Expr::exp(Expr::div(deg, Expr::mul(n, vt))))
+    }
 }
 
 /// Resolve thermal voltage `V_t` from explicit override, temperature, or nominal 300 K (`25.852 mV`).
@@ -335,11 +378,35 @@ fn stamp_pcb_microstrip_geom(
     // Effective copper trace width with trapezoidal etch undercut + Bahl-Garg thickness term
     let w_metal = Expr::add(w0_e, dw_e);
     let h_eff = Expr::add(h0_e, dh_e);
-    for value in [&w_metal, &h_eff, &tcu_e, &sig_e] { b.add_cmp("Positive microstrip dimension or conductivity", CmpOp::Gt, value.clone(), Expr::num(0.0)); }
-    let wide_regime = crate::paving::eval_expr_iv(&Expr::div(w_metal.clone(), h_eff.clone()), &b.parameter_box).is_some_and(|r| r.lo > 1.0)
-        && crate::paving::eval_expr_iv(&Expr::div(h_eff.clone(), tcu_e.clone()), &b.parameter_box).is_some_and(|r| r.lo > 0.5);
-    let thickness_log = b.positive_ln(&format!("thickness_log_{sid}"), (0.0, 1.0), Expr::div(Expr::mul(Expr::num(2.0), h_eff.clone()), tcu_e.clone()), "Bahl-Garg thickness correction");
-    let w_eff = Expr::add(w_metal.clone(), Expr::mul(Expr::div(tcu_e.clone(), Expr::num(std::f64::consts::PI)), Expr::add(Expr::num(1.0), thickness_log)));
+    for value in [&w_metal, &h_eff, &tcu_e, &sig_e] {
+        b.add_cmp(
+            "Positive microstrip dimension or conductivity",
+            CmpOp::Gt,
+            value.clone(),
+            Expr::num(0.0),
+        );
+    }
+    let wide_regime =
+        crate::paving::eval_expr_iv(&Expr::div(w_metal.clone(), h_eff.clone()), &b.parameter_box)
+            .is_some_and(|r| r.lo > 1.0)
+            && crate::paving::eval_expr_iv(
+                &Expr::div(h_eff.clone(), tcu_e.clone()),
+                &b.parameter_box,
+            )
+            .is_some_and(|r| r.lo > 0.5);
+    let thickness_log = b.positive_ln(
+        &format!("thickness_log_{sid}"),
+        (0.0, 1.0),
+        Expr::div(Expr::mul(Expr::num(2.0), h_eff.clone()), tcu_e.clone()),
+        "Bahl-Garg thickness correction",
+    );
+    let w_eff = Expr::add(
+        w_metal.clone(),
+        Expr::mul(
+            Expr::div(tcu_e.clone(), Expr::num(std::f64::consts::PI)),
+            Expr::add(Expr::num(1.0), thickness_log),
+        ),
+    );
     let u = Expr::div(w_eff, h_eff);
 
     // s_u = sqrt(1 + 12 / u)
@@ -397,14 +464,59 @@ fn stamp_pcb_microstrip_geom(
         format!("Characteristic impedance Z0 [Ohm] ({name})"),
     );
     let z0 = Expr::var(&z0_name);
-    let wide_log = b.positive_ln(&format!("wide_log_{sid}"), (0.0, 1.0), Expr::add(u.clone(), Expr::num(1.444)), "Wide-strip logarithm");
+    let wide_log = b.positive_ln(
+        &format!("wide_log_{sid}"),
+        (0.0, 1.0),
+        Expr::add(u.clone(), Expr::num(1.444)),
+        "Wide-strip logarithm",
+    );
     let narrow = Expr::div(Expr::mul(Expr::num(60.0), lnz), seeff.clone());
-    let wide = Expr::div(Expr::num(120.0 * std::f64::consts::PI), Expr::mul(seeff.clone(), Expr::add(Expr::add(u.clone(), Expr::num(1.393)), Expr::mul(Expr::num(0.667), wide_log))));
-    if wide_regime { b.add_eq(format!("Hammerstad-Jensen wide-strip impedance ({name})"), z0.clone(), wide); } else {
-    b.constraints.push(TaggedConstraint { comment: format!("Hammerstad-Jensen narrow/wide impedance ({name})"), formula: Formula::Or(vec![
-        Formula::And(vec![Formula::Cmp { op: CmpOp::Le, lhs: u.clone(), rhs: Expr::num(1.0) }, Formula::Cmp { op: CmpOp::Eq, lhs: z0.clone(), rhs: narrow }]),
-        Formula::And(vec![Formula::Cmp { op: CmpOp::Gt, lhs: u, rhs: Expr::num(1.0) }, Formula::Cmp { op: CmpOp::Eq, lhs: z0.clone(), rhs: wide }]),
-    ]) });
+    let wide = Expr::div(
+        Expr::num(120.0 * std::f64::consts::PI),
+        Expr::mul(
+            seeff.clone(),
+            Expr::add(
+                Expr::add(u.clone(), Expr::num(1.393)),
+                Expr::mul(Expr::num(0.667), wide_log),
+            ),
+        ),
+    );
+    if wide_regime {
+        b.add_eq(
+            format!("Hammerstad-Jensen wide-strip impedance ({name})"),
+            z0.clone(),
+            wide,
+        );
+    } else {
+        b.constraints.push(TaggedConstraint {
+            comment: format!("Hammerstad-Jensen narrow/wide impedance ({name})"),
+            formula: Formula::Or(vec![
+                Formula::And(vec![
+                    Formula::Cmp {
+                        op: CmpOp::Le,
+                        lhs: u.clone(),
+                        rhs: Expr::num(1.0),
+                    },
+                    Formula::Cmp {
+                        op: CmpOp::Eq,
+                        lhs: z0.clone(),
+                        rhs: narrow,
+                    },
+                ]),
+                Formula::And(vec![
+                    Formula::Cmp {
+                        op: CmpOp::Gt,
+                        lhs: u,
+                        rhs: Expr::num(1.0),
+                    },
+                    Formula::Cmp {
+                        op: CmpOp::Eq,
+                        lhs: z0.clone(),
+                        rhs: wide,
+                    },
+                ]),
+            ]),
+        });
     }
 
     // Total line L_tot, C_tot, R_dc
@@ -524,8 +636,20 @@ fn stamp_pcb_diffpair_geom(
     );
     let zdiff = Expr::var(&zdiff_name);
     let z0_sum = Expr::add(z0_p, z0_n);
-    let odd_factor = b.positive_sqrt(&format!("odd_factor_{sid}"), (0.0, 1.0), Expr::div(Expr::sub(Expr::num(1.0), kc.clone()), Expr::add(Expr::num(1.0), kc.clone())), "Odd-mode impedance factor");
-    b.add_eq(format!("Differential impedance of coupled LC ladder ({name})"), zdiff.clone(), Expr::mul(z0_sum, odd_factor));
+    let odd_factor = b.positive_sqrt(
+        &format!("odd_factor_{sid}"),
+        (0.0, 1.0),
+        Expr::div(
+            Expr::sub(Expr::num(1.0), kc.clone()),
+            Expr::add(Expr::num(1.0), kc.clone()),
+        ),
+        "Odd-mode impedance factor",
+    );
+    b.add_eq(
+        format!("Differential impedance of coupled LC ladder ({name})"),
+        zdiff.clone(),
+        Expr::mul(z0_sum, odd_factor),
+    );
 
     let cm_name = format!("Cm_{sid}");
     let lm_name = format!("Lm_{sid}");
@@ -603,10 +727,7 @@ fn build_mos_current(
             ));
         }
         let rth_e = b.lower_expr(rth_expr, &sid);
-        let tamb_e = b.lower_expr(
-            tamb_k.as_ref().unwrap_or(&Expr::num(300.0)),
-            &sid,
-        );
+        let tamb_e = b.lower_expr(tamb_k.as_ref().unwrap_or(&Expr::num(300.0)), &sid);
         let tch_name = format!("T_ch_{sid}");
         b.ensure_var(
             &tch_name,
@@ -618,12 +739,33 @@ fn build_mos_current(
         t_ch_var = Some((tch, tamb_e, rth_e));
     }
 
-    let temperature = t_ch_var.as_ref().map(|(t, _, _)| t.clone()).or_else(|| tamb_k.as_ref().map(|t| b.lower_expr(t, &sid)));
+    let temperature = t_ch_var
+        .as_ref()
+        .map(|(t, _, _)| t.clone())
+        .or_else(|| tamb_k.as_ref().map(|t| b.lower_expr(t, &sid)));
     let vt0 = if let Some(t) = temperature {
-        b.add_cmp("Positive device temperature", CmpOp::Gt, t.clone(), Expr::num(0.0));
-        Expr::add(vt0, Expr::mul(model_param(model, "kt_vth", -0.00085), Expr::sub(t, Expr::num(300.0))))
-    } else { vt0 };
-    b.add_cmp("Positive thermal voltage", CmpOp::Gt, vt_local.clone(), Expr::num(0.0));
+        b.add_cmp(
+            "Positive device temperature",
+            CmpOp::Gt,
+            t.clone(),
+            Expr::num(0.0),
+        );
+        Expr::add(
+            vt0,
+            Expr::mul(
+                model_param(model, "kt_vth", -0.00085),
+                Expr::sub(t, Expr::num(300.0)),
+            ),
+        )
+    } else {
+        vt0
+    };
+    b.add_cmp(
+        "Positive thermal voltage",
+        CmpOp::Gt,
+        vt_local.clone(),
+        Expr::num(0.0),
+    );
     let terminal_voltage = Expr::sub(vd.clone(), vs.clone());
     let current = match model.kind {
         ModelKind::EkvNmos | ModelKind::EkvPmos => {
@@ -666,18 +808,17 @@ fn build_mos_current(
                 (Expr::ln1p_exp(zf), Expr::ln1p_exp(zr))
             };
             let id_mag = Expr::mul(scale, Expr::sub(Expr::sq(yf), Expr::sq(yr)));
-            Ok(if !is_pmos {
-                id_mag
-            } else {
-                Expr::neg(id_mag)
-            })
+            Ok(if !is_pmos { id_mag } else { Expr::neg(id_mag) })
         }
         ModelKind::FinFetN | ModelKind::FinFetP | ModelKind::GaaNmos | ModelKind::GaaPmos => {
             let is_pmos = matches!(model.kind, ModelKind::FinFetP | ModelKind::GaaPmos);
             let is_gaa = matches!(model.kind, ModelKind::GaaNmos | ModelKind::GaaPmos);
 
             let lg0_nm = model_param(model, "lg_nm", if is_gaa { 12.0 } else { 21.0 });
-            let lg_nm = l.as_ref().map(|e| Expr::mul(Expr::num(1e9), b.lower_expr(e, &sid))).unwrap_or(lg0_nm);
+            let lg_nm = l
+                .as_ref()
+                .map(|e| Expr::mul(Expr::num(1e9), b.lower_expr(e, &sid)))
+                .unwrap_or(lg0_nm);
             let tbody0_nm = model_param(
                 model,
                 if is_gaa { "tns_nm" } else { "tfin_nm" },
@@ -685,8 +826,18 @@ fn build_mos_current(
             );
             let dt_nm = b.lower_expr(dtfin_nm, &sid);
             let tbody_nm = Expr::add(tbody0_nm.clone(), dt_nm);
-            b.add_cmp("Positive body thickness", CmpOp::Gt, tbody_nm.clone(), Expr::num(0.0));
-            b.add_cmp("Positive gate length", CmpOp::Gt, lg_nm.clone(), Expr::num(0.0));
+            b.add_cmp(
+                "Positive body thickness",
+                CmpOp::Gt,
+                tbody_nm.clone(),
+                Expr::num(0.0),
+            );
+            b.add_cmp(
+                "Positive gate length",
+                CmpOp::Gt,
+                lg_nm.clone(),
+                Expr::num(0.0),
+            );
             let eot_nm = model_param(model, "eot_nm", if is_gaa { 0.85 } else { 1.0 });
             let alpha_qm = model_param(model, "alpha_qm", 1.71);
             let eta_dibl0 = model_param(model, "eta_dibl0", 3.1);
@@ -698,10 +849,7 @@ fn build_mos_current(
             let lam_nm = b.positive_sqrt(
                 &format!("lam_{sid}"),
                 (0.5, 15.0),
-                Expr::mul(
-                    Expr::num(geom_factor),
-                    Expr::mul(tbody_nm.clone(), eot_nm),
-                ),
+                Expr::mul(Expr::num(geom_factor), Expr::mul(tbody_nm.clone(), eot_nm)),
                 &format!("Multi-gate natural scaling length lambda [nm] ({elem_name})"),
             );
 
@@ -724,9 +872,19 @@ fn build_mos_current(
             );
 
             // Effective multi-gate width / aspect ratio
-            let nmult = b.lower_expr(nfin.as_ref().unwrap_or(&model_param(model, "nsheet", if is_gaa { 3.0 } else { 1.0 })), &sid);
+            let nmult = b.lower_expr(
+                nfin.as_ref().unwrap_or(&model_param(
+                    model,
+                    "nsheet",
+                    if is_gaa { 3.0 } else { 1.0 },
+                )),
+                &sid,
+            );
             let w_perim_nm = if is_gaa {
-                let wns = w.as_ref().map(|e| Expr::mul(Expr::num(1e9), b.lower_expr(e, &sid))).unwrap_or_else(|| model_param(model, "wns_nm", 18.0));
+                let wns = w
+                    .as_ref()
+                    .map(|e| Expr::mul(Expr::num(1e9), b.lower_expr(e, &sid)))
+                    .unwrap_or_else(|| model_param(model, "wns_nm", 18.0));
                 Expr::mul(Expr::num(2.0), Expr::add(wns, tbody_nm))
             } else {
                 let hfin = model_param(model, "hfin_nm", 32.0);
@@ -745,7 +903,10 @@ fn build_mos_current(
                 Expr::mul(eta_dibl, vds_pos.clone()),
             );
             let denom = Expr::mul(Expr::num(2.0), vt_local);
-            let zf = Expr::div(Expr::mul(kappa.clone(), Expr::sub(vgs_int.clone(), vth_eff.clone())), denom.clone());
+            let zf = Expr::div(
+                Expr::mul(kappa.clone(), Expr::sub(vgs_int.clone(), vth_eff.clone())),
+                denom.clone(),
+            );
             let zr = Expr::div(
                 Expr::sub(
                     Expr::mul(kappa, Expr::sub(vgs_int, vth_eff)),
@@ -761,8 +922,14 @@ fn build_mos_current(
             } else {
                 (Expr::ln1p_exp(zf), Expr::ln1p_exp(zr))
             };
-            let degradation = Expr::add(Expr::num(1.0), Expr::mul(model_param(model, "theta", 0.1), yf.clone()));
-            let id_mag = Expr::div(Expr::mul(drive_scale, Expr::sub(Expr::sq(yf), Expr::sq(yr))), degradation);
+            let degradation = Expr::add(
+                Expr::num(1.0),
+                Expr::mul(model_param(model, "theta", 0.1), yf.clone()),
+            );
+            let id_mag = Expr::div(
+                Expr::mul(drive_scale, Expr::sub(Expr::sq(yf), Expr::sq(yr))),
+                degradation,
+            );
             let id_signed = if !is_pmos {
                 id_mag.clone()
             } else {
@@ -780,7 +947,10 @@ fn build_mos_current(
             let vds = Expr::sub(vd, vs);
             let vth_eff = Expr::add(vt0, dvth_e);
             let denom = Expr::mul(Expr::num(2.0), vt_local);
-            let zf = Expr::div(Expr::mul(kappa.clone(), Expr::sub(vgs.clone(), vth_eff.clone())), denom.clone());
+            let zf = Expr::div(
+                Expr::mul(kappa.clone(), Expr::sub(vgs.clone(), vth_eff.clone())),
+                denom.clone(),
+            );
             let zr = Expr::div(
                 Expr::sub(Expr::mul(kappa, Expr::sub(vgs, vth_eff)), vds),
                 denom,
@@ -801,13 +971,18 @@ fn build_mos_current(
             "model `{}` on MOSFET `{elem_name}` has incompatible kind `{other:?}`",
             model.name
         )),
-     }?;
+    }?;
     if let Some((tch, tamb, resistance)) = t_ch_var {
-        b.add_eq(format!("Electrothermal balance ({elem_name})"), tch,
-            Expr::add(tamb, Expr::mul(resistance, Expr::mul(terminal_voltage, current.clone()))));
+        b.add_eq(
+            format!("Electrothermal balance ({elem_name})"),
+            tch,
+            Expr::add(
+                tamb,
+                Expr::mul(resistance, Expr::mul(terminal_voltage, current.clone())),
+            ),
+        );
     }
     Ok(current)
-
 }
 
 const Q_C: f64 = 1.602_176_634e-19;
@@ -815,12 +990,31 @@ const EPS_SI_F_PER_CM: f64 = 11.7 * 8.854_187_812_8e-14;
 
 /// Intrinsic density [cm^-3] and low-field mobility [cm²/(V s)] share a 300 K reference.
 fn silicon_transport(b: &mut AlgebraicBuilder, tag: &str, temperature: Expr) -> (Expr, Expr) {
-    b.add_cmp("Positive lattice temperature", CmpOp::Gt, temperature.clone(), Expr::num(0.0));
+    b.add_cmp(
+        "Positive lattice temperature",
+        CmpOp::Gt,
+        temperature.clone(),
+        Expr::num(0.0),
+    );
     let ratio = Expr::div(temperature.clone(), Expr::num(300.0));
-    let root = b.positive_sqrt(&format!("sqrt_temperature_{tag}"), (0.0, 1.0), ratio.clone(), "Temperature density-of-states factor");
+    let root = b.positive_sqrt(
+        &format!("sqrt_temperature_{tag}"),
+        (0.0, 1.0),
+        ratio.clone(),
+        "Temperature density-of-states factor",
+    );
     let dos = Expr::mul(ratio, root);
-    let activation = Expr::exp(Expr::mul(Expr::num(1.12 / (2.0 * KB_OVER_Q)), Expr::sub(Expr::num(1.0/300.0), Expr::div(Expr::num(1.0), temperature))));
-    (Expr::mul(Expr::num(1e10), Expr::mul(dos.clone(), activation)), Expr::div(Expr::num(300.0), dos))
+    let activation = Expr::exp(Expr::mul(
+        Expr::num(1.12 / (2.0 * KB_OVER_Q)),
+        Expr::sub(
+            Expr::num(1.0 / 300.0),
+            Expr::div(Expr::num(1.0), temperature),
+        ),
+    ));
+    (
+        Expr::mul(Expr::num(1e10), Expr::mul(dos.clone(), activation)),
+        Expr::div(Expr::num(300.0), dos),
+    )
 }
 
 /// Stamp 2D `(nx x ny)` Multi-Gate FinFET (`asap7`) cross-section Poisson + Quantum Confinement + SG Continuity.
@@ -994,88 +1188,107 @@ fn stamp_tcad_finfet_2d(
     for e in 0..(nx - 1) {
         let mut integrated = Expr::num(0.0);
         for (j, psi_l) in psi_grid[e].iter().enumerate().take(ny) {
-        let psi_l = psi_l.clone();
-        let psi_r = psi_grid[e + 1][j].clone();
-        let dv_qm_j = Expr::mul(Expr::num(if j == 0 || j + 1 == ny { 1.35 } else { 1.0 }), dv_qm_base.clone());
-        let delta = Expr::div(Expr::sub(psi_r.clone(), psi_l.clone()), vt.clone());
+            let psi_l = psi_l.clone();
+            let psi_r = psi_grid[e + 1][j].clone();
+            let dv_qm_j = Expr::mul(
+                Expr::num(if j == 0 || j + 1 == ny { 1.35 } else { 1.0 }),
+                dv_qm_base.clone(),
+            );
+            let delta = Expr::div(Expr::sub(psi_r.clone(), psi_l.clone()), vt.clone());
 
-        let ee_name = format!("E_sg_{sid}_{e}_{j}");
-        let bp_name = format!("Bp_sg_{sid}_{e}_{j}");
-        b.ensure_var(
-            &ee_name,
-            (0.0, 1.0e24),
-            format!("SG edge exponential exp(Delta_{e}) ({name})"),
-        );
-        b.ensure_var(
-            &bp_name,
-            (0.0, 60.0),
-            format!("SG edge Bernoulli B(Delta_{e}) ({name})"),
-        );
-        let ee = Expr::var(&ee_name);
-        b.add_cmp("Positive SG exponential", CmpOp::Gt, ee.clone(), Expr::num(0.0));
-        let bp = Expr::var(&bp_name);
-        // Cancellation-free & interval-tight identity: B(-Delta) = B(Delta) * exp(Delta) = Bp * E
-        let bm = Expr::mul(bp.clone(), ee.clone());
+            let ee_name = format!("E_sg_{sid}_{e}_{j}");
+            let bp_name = format!("Bp_sg_{sid}_{e}_{j}");
+            b.ensure_var(
+                &ee_name,
+                (0.0, 1.0e24),
+                format!("SG edge exponential exp(Delta_{e}) ({name})"),
+            );
+            b.ensure_var(
+                &bp_name,
+                (0.0, 60.0),
+                format!("SG edge Bernoulli B(Delta_{e}) ({name})"),
+            );
+            let ee = Expr::var(&ee_name);
+            b.add_cmp(
+                "Positive SG exponential",
+                CmpOp::Gt,
+                ee.clone(),
+                Expr::num(0.0),
+            );
+            let bp = Expr::var(&bp_name);
+            // Cancellation-free & interval-tight identity: B(-Delta) = B(Delta) * exp(Delta) = Bp * E
+            let bm = Expr::mul(bp.clone(), ee.clone());
 
-        b.add_eq(
-            format!("SG exponential link E_{e} = exp(Delta_{e}) ({name})"),
-            ee.clone(),
-            Expr::exp(delta.clone()),
-        );
-        b.add_eq(
-            format!("Singularity-free Bernoulli identity Bp_{e}*(E_{e} - 1) = Delta_{e} ({name})"),
-            Expr::mul(bp.clone(), Expr::sub(ee, Expr::num(1.0))),
-            delta.clone(),
-        );
-
-        // Global Euler-coth polynomial bracket valid for ALL real Delta:
-        // 1 - d/2 + d^2/12 - d^4/720 <= B(d) <= 1 - d/2 + d^2/12
-        let d2 = Expr::sq(delta.clone());
-        let d4 = Expr::sq(d2.clone());
-        let upper = Expr::add(
-            Expr::sub(Expr::num(1.0), Expr::div(delta, Expr::num(2.0))),
-            Expr::div(d2, Expr::num(12.0)),
-        );
-        let lower = Expr::sub(upper.clone(), Expr::div(d4, Expr::num(720.0)));
-        b.add_cmp(
-            format!("Global Bernoulli lower bracket at edge {e} ({name})"),
-            CmpOp::Ge,
-            bp.clone(),
-            lower,
-        );
-        b.add_cmp(
-            format!("Global Bernoulli upper bracket at edge {e} ({name})"),
-            CmpOp::Le,
-            bp.clone(),
-            upper,
-        );
-
-        let n_l = Expr::exp(Expr::div(
-            Expr::sub(
-                Expr::sub(psi_l, dv_qm_j.clone()),
-                phin_center[e].clone(),
-            ),
-            vt.clone(),
-        ));
-        let n_r = Expr::exp(Expr::div(
-            Expr::sub(
-                Expr::sub(psi_r, dv_qm_j.clone()),
-                phin_center[e + 1].clone(),
-            ),
-            vt.clone(),
-        ));
-        // Positive terminal drain-to-source current density J_e [uA/um] when V_DS > 0 (phi_n,R > phi_n,L)
-        let j_edge = Expr::div(
-            Expr::mul(
-                Expr::mul(Expr::num(Q_C * 100.0), Expr::mul(ni.clone(), Expr::mul(mobility.clone(), Expr::div(Expr::mul(tfin_e.clone(), Expr::num(32.0 / ny as f64)), Expr::add(Expr::num(64.0), tfin_e.clone()))))),
-                Expr::mul(
-                    vt.clone(),
-                    Expr::sub(Expr::mul(bm, n_l), Expr::mul(bp, n_r)),
+            b.add_eq(
+                format!("SG exponential link E_{e} = exp(Delta_{e}) ({name})"),
+                ee.clone(),
+                Expr::exp(delta.clone()),
+            );
+            b.add_eq(
+                format!(
+                    "Singularity-free Bernoulli identity Bp_{e}*(E_{e} - 1) = Delta_{e} ({name})"
                 ),
-            ),
-            dx_nm.clone(),
-        );
-        integrated = Expr::add(integrated, j_edge);
+                Expr::mul(bp.clone(), Expr::sub(ee, Expr::num(1.0))),
+                delta.clone(),
+            );
+
+            // Global Euler-coth polynomial bracket valid for ALL real Delta:
+            // 1 - d/2 + d^2/12 - d^4/720 <= B(d) <= 1 - d/2 + d^2/12
+            let d2 = Expr::sq(delta.clone());
+            let d4 = Expr::sq(d2.clone());
+            let upper = Expr::add(
+                Expr::sub(Expr::num(1.0), Expr::div(delta, Expr::num(2.0))),
+                Expr::div(d2, Expr::num(12.0)),
+            );
+            let lower = Expr::sub(upper.clone(), Expr::div(d4, Expr::num(720.0)));
+            b.add_cmp(
+                format!("Global Bernoulli lower bracket at edge {e} ({name})"),
+                CmpOp::Ge,
+                bp.clone(),
+                lower,
+            );
+            b.add_cmp(
+                format!("Global Bernoulli upper bracket at edge {e} ({name})"),
+                CmpOp::Le,
+                bp.clone(),
+                upper,
+            );
+
+            let n_l = Expr::exp(Expr::div(
+                Expr::sub(Expr::sub(psi_l, dv_qm_j.clone()), phin_center[e].clone()),
+                vt.clone(),
+            ));
+            let n_r = Expr::exp(Expr::div(
+                Expr::sub(
+                    Expr::sub(psi_r, dv_qm_j.clone()),
+                    phin_center[e + 1].clone(),
+                ),
+                vt.clone(),
+            ));
+            // Positive terminal drain-to-source current density J_e [uA/um] when V_DS > 0 (phi_n,R > phi_n,L)
+            let j_edge = Expr::div(
+                Expr::mul(
+                    Expr::mul(
+                        Expr::num(Q_C * 100.0),
+                        Expr::mul(
+                            ni.clone(),
+                            Expr::mul(
+                                mobility.clone(),
+                                Expr::div(
+                                    Expr::mul(tfin_e.clone(), Expr::num(32.0 / ny as f64)),
+                                    Expr::add(Expr::num(64.0), tfin_e.clone()),
+                                ),
+                            ),
+                        ),
+                    ),
+                    Expr::mul(
+                        vt.clone(),
+                        Expr::sub(Expr::mul(bm, n_l), Expr::mul(bp, n_r)),
+                    ),
+                ),
+                dx_nm.clone(),
+            );
+            integrated = Expr::add(integrated, j_edge);
         }
         edge_currents.push(integrated);
     }
@@ -1234,7 +1447,10 @@ fn stamp_tcad_gaa_electrothermal(
         b.add_eq(
             format!("4-sided GAA nanosheet Poisson + inner-spacer fringe at slice {i} ({name})"),
             Expr::add(lap_x, Expr::add(gate_wrap, isp_fringe)),
-            Expr::mul(Expr::num(Q_C * 1e16 / EPS_SI_F_PER_CM * 1e-14), Expr::add(n_sheet, Expr::num(1.0))),
+            Expr::mul(
+                Expr::num(Q_C * 1e16 / EPS_SI_F_PER_CM * 1e-14),
+                Expr::add(n_sheet, Expr::num(1.0)),
+            ),
         );
     }
 
@@ -1256,7 +1472,12 @@ fn stamp_tcad_gaa_electrothermal(
             format!("GAA SG edge Bernoulli B(Delta_{e}) ({name})"),
         );
         let ee = Expr::var(&ee_name);
-        b.add_cmp("Positive SG exponential", CmpOp::Gt, ee.clone(), Expr::num(0.0));
+        b.add_cmp(
+            "Positive SG exponential",
+            CmpOp::Gt,
+            ee.clone(),
+            Expr::num(0.0),
+        );
         let bp = Expr::var(&bp_name);
         // Cancellation-free & interval-tight identity: B(-Delta) = B(Delta) * exp(Delta) = Bp * E
         let bm = Expr::mul(bp.clone(), ee.clone());
@@ -1311,7 +1532,10 @@ fn stamp_tcad_gaa_electrothermal(
         // Positive drain-to-source stack current in microamperes [uA] when V_DS > 0 (phi_n,R > phi_n,L)
         let i_edge_ua = Expr::div(
             Expr::mul(
-                Expr::mul(Expr::num(Q_C * 0.1), Expr::mul(ni.clone(), mobility.clone())),
+                Expr::mul(
+                    Expr::num(Q_C * 0.1),
+                    Expr::mul(ni.clone(), mobility.clone()),
+                ),
                 Expr::mul(
                     cross_section_nm2.clone(),
                     Expr::mul(
@@ -1348,7 +1572,9 @@ fn stamp_tcad_gaa_electrothermal(
 
     // Self-heating energy balance: T_ch = T_amb + (R_th * 1e-6 W/uW) * V_ds * I_stack_ua
     b.add_eq(
-        format!("Coupled GAA electro-thermal balance T_ch = T_amb + R_th * V_ds * I_stack ({name})"),
+        format!(
+            "Coupled GAA electro-thermal balance T_ch = T_amb + R_th * V_ds * I_stack ({name})"
+        ),
         tch,
         Expr::add(
             tamb_e,
@@ -1378,7 +1604,9 @@ fn stamp_tcad_pn_1d(
     if nodes < 5 {
         return Err(format!(".tcad_pn_1d `{name}` requires nodes >= 5"));
     }
-    if length_um <= 0.0 || junction_um <= 0.0 || junction_um >= length_um { return Err("invalid PN junction geometry".into()); }
+    if length_um <= 0.0 || junction_um <= 0.0 || junction_um >= length_um {
+        return Err("invalid PN junction geometry".into());
+    }
     let sid = sanitize_ident(name);
     let na = b.lower_expr(q_dope, &sid);
     let nd = b.lower_expr(nd_plus, &sid);
@@ -1390,61 +1618,193 @@ fn stamp_tcad_pn_1d(
     let dx = length_um / (nodes - 1) as f64;
     let mut contacts = Vec::new();
     for (label, doping, sign) in [("p", na.clone(), -1.0), ("n", nd.clone(), 1.0)] {
-        b.add_cmp("Positive contact doping", CmpOp::Gt, doping.clone(), Expr::num(0.0));
-        let root = b.positive_sqrt(&format!("neutral_{sid}_{label}"), (0.0, 1.0), Expr::add(Expr::sq(doping.clone()), Expr::mul(Expr::num(4.0), Expr::sq(ni_scaled.clone()))), "Ohmic contact neutrality");
+        b.add_cmp(
+            "Positive contact doping",
+            CmpOp::Gt,
+            doping.clone(),
+            Expr::num(0.0),
+        );
+        let root = b.positive_sqrt(
+            &format!("neutral_{sid}_{label}"),
+            (0.0, 1.0),
+            Expr::add(
+                Expr::sq(doping.clone()),
+                Expr::mul(Expr::num(4.0), Expr::sq(ni_scaled.clone())),
+            ),
+            "Ohmic contact neutrality",
+        );
         let majority = Expr::div(Expr::add(doping, root), Expr::num(2.0));
-        let log = b.positive_ln(&format!("contact_log_{sid}_{label}"), (0.0, 1.0), Expr::div(majority, ni_scaled.clone()), "Ohmic contact built-in potential");
+        let log = b.positive_ln(
+            &format!("contact_log_{sid}_{label}"),
+            (0.0, 1.0),
+            Expr::div(majority, ni_scaled.clone()),
+            "Ohmic contact built-in potential",
+        );
         contacts.push(Expr::mul(Expr::num(sign), Expr::mul(vt.clone(), log)));
     }
-    let mut psi = Vec::new(); let mut n = Vec::new(); let mut p = Vec::new();
+    let mut psi = Vec::new();
+    let mut n = Vec::new();
+    let mut p = Vec::new();
     for i in 0..nodes {
-        let (potential, fnn, fpp) = if i == 0 { (contacts[0].clone(), Expr::num(0.0), Expr::num(0.0)) }
-        else if i + 1 == nodes { (Expr::add(contacts[1].clone(), bias.clone()), bias.clone(), bias.clone()) }
-        else {
-            let pn = format!("psi_{sid}_{i}"); let nn = format!("phin_{sid}_{i}"); let pp = format!("phip_{sid}_{i}");
-            for name in [&pn, &nn, &pp] { b.ensure_var(name, (-2.0, 5.0), "PN drift-diffusion potential [V]"); }
+        let (potential, fnn, fpp) = if i == 0 {
+            (contacts[0].clone(), Expr::num(0.0), Expr::num(0.0))
+        } else if i + 1 == nodes {
+            (
+                Expr::add(contacts[1].clone(), bias.clone()),
+                bias.clone(),
+                bias.clone(),
+            )
+        } else {
+            let pn = format!("psi_{sid}_{i}");
+            let nn = format!("phin_{sid}_{i}");
+            let pp = format!("phip_{sid}_{i}");
+            for name in [&pn, &nn, &pp] {
+                b.ensure_var(name, (-2.0, 5.0), "PN drift-diffusion potential [V]");
+            }
             (Expr::var(pn), Expr::var(nn), Expr::var(pp))
         };
-        n.push(Expr::mul(ni_scaled.clone(), Expr::exp(Expr::div(Expr::sub(potential.clone(), fnn), vt.clone()))));
-        p.push(Expr::mul(ni_scaled.clone(), Expr::exp(Expr::div(Expr::sub(fpp, potential.clone()), vt.clone()))));
+        n.push(Expr::mul(
+            ni_scaled.clone(),
+            Expr::exp(Expr::div(Expr::sub(potential.clone(), fnn), vt.clone())),
+        ));
+        p.push(Expr::mul(
+            ni_scaled.clone(),
+            Expr::exp(Expr::div(Expr::sub(fpp, potential.clone()), vt.clone())),
+        ));
         psi.push(potential);
     }
-    for i in 1..nodes-1 {
-        let doping = if i as f64 * dx < junction_um { Expr::neg(na.clone()) } else { nd.clone() };
-        let lap = Expr::div(Expr::sub(Expr::add(psi[i-1].clone(), psi[i+1].clone()), Expr::mul(Expr::num(2.0), psi[i].clone())), Expr::num(dx*dx));
-        b.add_eq(format!("PN Poisson node {i}"), lap, Expr::mul(Expr::num(Q_C * 1e16 / EPS_SI_F_PER_CM * 1e-8), Expr::sub(Expr::sub(n[i].clone(), p[i].clone()), doping)));
+    for i in 1..nodes - 1 {
+        let doping = if i as f64 * dx < junction_um {
+            Expr::neg(na.clone())
+        } else {
+            nd.clone()
+        };
+        let lap = Expr::div(
+            Expr::sub(
+                Expr::add(psi[i - 1].clone(), psi[i + 1].clone()),
+                Expr::mul(Expr::num(2.0), psi[i].clone()),
+            ),
+            Expr::num(dx * dx),
+        );
+        b.add_eq(
+            format!("PN Poisson node {i}"),
+            lap,
+            Expr::mul(
+                Expr::num(Q_C * 1e16 / EPS_SI_F_PER_CM * 1e-8),
+                Expr::sub(Expr::sub(n[i].clone(), p[i].clone()), doping),
+            ),
+        );
     }
-    let peak_name = format!("E_peak_v_per_um_{sid}"); b.ensure_var(&peak_name, (0.0, 1.0), "Peak electric-field magnitude over all edges");
+    let peak_name = format!("E_peak_v_per_um_{sid}");
+    b.ensure_var(
+        &peak_name,
+        (0.0, 1.0),
+        "Peak electric-field magnitude over all edges",
+    );
     let peak = Expr::var(peak_name);
-    let mut peak_choices = Vec::new(); let mut electrons = Vec::new(); let mut holes = Vec::new();
-    for e in 0..nodes-1 {
-        let delta = Expr::div(Expr::sub(psi[e+1].clone(), psi[e].clone()), vt.clone());
-        let en = format!("E_pn_{sid}_{e}"); let bn = format!("Bp_pn_{sid}_{e}");
-        b.ensure_var(&en, (0.0, 1.0), "SG exponential"); b.ensure_var(&bn, (0.0, 1.0), "SG Bernoulli");
-        let ee = Expr::var(en); let bp = Expr::var(bn); let bm = Expr::mul(bp.clone(), ee.clone());
-        b.add_cmp("Positive SG exponential", CmpOp::Gt, ee.clone(), Expr::num(0.0));
-        b.add_cmp("Positive Bernoulli function", CmpOp::Gt, bp.clone(), Expr::num(0.0));
+    let mut peak_choices = Vec::new();
+    let mut electrons = Vec::new();
+    let mut holes = Vec::new();
+    for e in 0..nodes - 1 {
+        let delta = Expr::div(Expr::sub(psi[e + 1].clone(), psi[e].clone()), vt.clone());
+        let en = format!("E_pn_{sid}_{e}");
+        let bn = format!("Bp_pn_{sid}_{e}");
+        b.ensure_var(&en, (0.0, 1.0), "SG exponential");
+        b.ensure_var(&bn, (0.0, 1.0), "SG Bernoulli");
+        let ee = Expr::var(en);
+        let bp = Expr::var(bn);
+        let bm = Expr::mul(bp.clone(), ee.clone());
+        b.add_cmp(
+            "Positive SG exponential",
+            CmpOp::Gt,
+            ee.clone(),
+            Expr::num(0.0),
+        );
+        b.add_cmp(
+            "Positive Bernoulli function",
+            CmpOp::Gt,
+            bp.clone(),
+            Expr::num(0.0),
+        );
         b.add_eq("SG exponential", ee.clone(), Expr::exp(delta.clone()));
-        b.add_eq("SG Bernoulli relation", Expr::mul(bp.clone(), Expr::sub(ee, Expr::num(1.0))), delta.clone());
-        let upper = Expr::add(Expr::sub(Expr::num(1.0), Expr::div(delta.clone(), Expr::num(2.0))), Expr::div(Expr::sq(delta.clone()), Expr::num(12.0)));
-        b.add_cmp("Bernoulli upper bracket", CmpOp::Le, bp.clone(), upper.clone());
-        b.add_cmp("Bernoulli lower bracket", CmpOp::Ge, bp.clone(), Expr::sub(upper, Expr::div(Expr::sq(Expr::sq(delta)), Expr::num(720.0))));
-        let scale = Expr::mul(Expr::num(Q_C * 1e16 / (dx * 1e-4)), Expr::mul(mu.clone(), vt.clone()));
-        electrons.push(Expr::mul(scale.clone(), Expr::sub(Expr::mul(bm.clone(), n[e].clone()), Expr::mul(bp.clone(), n[e+1].clone()))));
-        holes.push(Expr::mul(Expr::mul(Expr::num(0.4), scale), Expr::sub(Expr::mul(bm, p[e+1].clone()), Expr::mul(bp, p[e].clone()))));
-        let field = Expr::div(Expr::sub(psi[e].clone(), psi[e+1].clone()), Expr::num(dx));
+        b.add_eq(
+            "SG Bernoulli relation",
+            Expr::mul(bp.clone(), Expr::sub(ee, Expr::num(1.0))),
+            delta.clone(),
+        );
+        let upper = Expr::add(
+            Expr::sub(Expr::num(1.0), Expr::div(delta.clone(), Expr::num(2.0))),
+            Expr::div(Expr::sq(delta.clone()), Expr::num(12.0)),
+        );
+        b.add_cmp(
+            "Bernoulli upper bracket",
+            CmpOp::Le,
+            bp.clone(),
+            upper.clone(),
+        );
+        b.add_cmp(
+            "Bernoulli lower bracket",
+            CmpOp::Ge,
+            bp.clone(),
+            Expr::sub(
+                upper,
+                Expr::div(Expr::sq(Expr::sq(delta)), Expr::num(720.0)),
+            ),
+        );
+        let scale = Expr::mul(
+            Expr::num(Q_C * 1e16 / (dx * 1e-4)),
+            Expr::mul(mu.clone(), vt.clone()),
+        );
+        electrons.push(Expr::mul(
+            scale.clone(),
+            Expr::sub(
+                Expr::mul(bm.clone(), n[e].clone()),
+                Expr::mul(bp.clone(), n[e + 1].clone()),
+            ),
+        ));
+        holes.push(Expr::mul(
+            Expr::mul(Expr::num(0.4), scale),
+            Expr::sub(Expr::mul(bm, p[e + 1].clone()), Expr::mul(bp, p[e].clone())),
+        ));
+        let field = Expr::div(Expr::sub(psi[e].clone(), psi[e + 1].clone()), Expr::num(dx));
         for signed in [field.clone(), Expr::neg(field.clone())] {
-            b.add_cmp("Peak field envelope", CmpOp::Ge, peak.clone(), signed.clone());
-            peak_choices.push(Formula::Cmp {op: CmpOp::Eq, lhs: peak.clone(), rhs: signed});
+            b.add_cmp(
+                "Peak field envelope",
+                CmpOp::Ge,
+                peak.clone(),
+                signed.clone(),
+            );
+            peak_choices.push(Formula::Cmp {
+                op: CmpOp::Eq,
+                lhs: peak.clone(),
+                rhs: signed,
+            });
         }
-        if e == ((junction_um/dx).floor() as usize).min(nodes-2) {
-            let name = format!("E_junc_v_per_um_{sid}"); b.ensure_var(&name, (0.0, 1.0), "Signed junction electric field"); b.add_eq("E = -dpsi/dx", Expr::var(name), field);
+        if e == ((junction_um / dx).floor() as usize).min(nodes - 2) {
+            let name = format!("E_junc_v_per_um_{sid}");
+            b.ensure_var(&name, (0.0, 1.0), "Signed junction electric field");
+            b.add_eq("E = -dpsi/dx", Expr::var(name), field);
         }
     }
-    b.constraints.push(TaggedConstraint {comment: "Exact maximum field magnitude".into(), formula: Formula::Or(peak_choices)});
-    for i in 1..nodes-1 { b.add_eq("Electron SG continuity", electrons[i].clone(), electrons[i-1].clone()); b.add_eq("Hole SG continuity", holes[i].clone(), holes[i-1].clone()); }
-    let current = format!("J_a_per_cm2_{sid}"); b.ensure_var(&current, (0.0, 1.0), "Total PN current density [A/cm²]");
-    b.add_eq("PN terminal current", Expr::var(current), Expr::add(electrons[0].clone(), holes[0].clone()));
+    b.constraints.push(TaggedConstraint {
+        comment: "Exact maximum field magnitude".into(),
+        formula: Formula::Or(peak_choices),
+    });
+    for i in 1..nodes - 1 {
+        b.add_eq(
+            "Electron SG continuity",
+            electrons[i].clone(),
+            electrons[i - 1].clone(),
+        );
+        b.add_eq("Hole SG continuity", holes[i].clone(), holes[i - 1].clone());
+    }
+    let current = format!("J_a_per_cm2_{sid}");
+    b.ensure_var(&current, (0.0, 1.0), "Total PN current density [A/cm²]");
+    b.add_eq(
+        "PN terminal current",
+        Expr::var(current),
+        Expr::add(electrons[0].clone(), holes[0].clone()),
+    );
     Ok(())
 }
 
@@ -1461,19 +1821,32 @@ pub fn stamp_deck(deck: &Deck) -> Result<StampedSystem, String> {
     let mut pending = BTreeMap::new();
     let mut names = BTreeSet::new();
     for p in &deck.params {
-        if sanitize_ident(&p.name) != p.name { return Err(format!("unsupported parameter identifier `{}`", p.name)); }
-        if !names.insert(p.name.clone()) { return Err(format!("duplicate parameter `{}`", p.name)); }
+        if sanitize_ident(&p.name) != p.name {
+            return Err(format!("unsupported parameter identifier `{}`", p.name));
+        }
+        if !names.insert(p.name.clone()) {
+            return Err(format!("duplicate parameter `{}`", p.name));
+        }
     }
     for (name, value) in &deck.consts {
-        if !names.insert(name.clone()) { return Err(format!("duplicate constant or parameter `{name}`")); }
+        if !names.insert(name.clone()) {
+            return Err(format!("duplicate constant or parameter `{name}`"));
+        }
         pending.insert(name.clone(), value.clone());
     }
     while !pending.is_empty() {
-        let ready = pending.iter().find_map(|(name, value)| {
-            let mut blocked = false;
-            value.visit(&mut |e| if let Expr::Var(v) = e { blocked |= pending.contains_key(v); });
-            (!blocked).then(|| name.clone())
-        }).ok_or("cyclic constant definitions")?;
+        let ready = pending
+            .iter()
+            .find_map(|(name, value)| {
+                let mut blocked = false;
+                value.visit(&mut |e| {
+                    if let Expr::Var(v) = e {
+                        blocked |= pending.contains_key(v);
+                    }
+                });
+                (!blocked).then(|| name.clone())
+            })
+            .ok_or("cyclic constant definitions")?;
         let value = pending.remove(&ready).expect("selected pending constant");
         const_map.insert(ready, value.substitute(&const_map, &empty_nodes, None));
     }
@@ -1481,13 +1854,20 @@ pub fn stamp_deck(deck: &Deck) -> Result<StampedSystem, String> {
     let mut node_names = BTreeMap::new();
     for element in &deck.elements {
         for node in element.nodes() {
-            if is_ground_node(node) { continue; }
+            if is_ground_node(node) {
+                continue;
+            }
             if let Some(previous) = node_names.insert(sanitize_ident(node), node) {
-                if previous != node { return Err(format!("colliding node names `{previous}` and `{node}`")); }
+                if previous != node {
+                    return Err(format!("colliding node names `{previous}` and `{node}`"));
+                }
             }
         }
         if !element_names.insert(sanitize_ident(element.name())) {
-            return Err(format!("duplicate or colliding element name `{}`", element.name()));
+            return Err(format!(
+                "duplicate or colliding element name `{}`",
+                element.name()
+            ));
         }
         for expression in element.expressions() {
             let expression = expression.substitute(&const_map, &empty_nodes, None);
@@ -1497,7 +1877,12 @@ pub fn stamp_deck(deck: &Deck) -> Result<StampedSystem, String> {
                 invalid |= matches!(e, Expr::Num(v) if !v.is_finite());
                 invalid |= matches!(e, Expr::Var(v) if !deck.params.iter().any(|p| &p.name == v));
             });
-            if invalid { return Err(format!("non-finite, unresolved, or behavioral device parameter on `{}`", element.name())); }
+            if invalid {
+                return Err(format!(
+                    "non-finite, unresolved, or behavioral device parameter on `{}`",
+                    element.name()
+                ));
+            }
         }
     }
     let mut resolved_deck = deck.clone();
@@ -1507,57 +1892,172 @@ pub fn stamp_deck(deck: &Deck) -> Result<StampedSystem, String> {
         }
     }
     for element in &mut resolved_deck.elements {
-        if let Element::MlccCap { model, overrides, c0, c_min, vsat, esr, esl, name, .. } = element {
-            let card = model.as_ref().map(|m| resolved_deck.models.get(m).ok_or_else(|| format!("unknown capacitor model `{m}`"))).transpose()?;
+        if let Element::MlccCap {
+            model,
+            overrides,
+            c0,
+            c_min,
+            vsat,
+            esr,
+            esl,
+            name,
+            ..
+        } = element
+        {
+            let card = model
+                .as_ref()
+                .map(|m| {
+                    resolved_deck
+                        .models
+                        .get(m)
+                        .ok_or_else(|| format!("unknown capacitor model `{m}`"))
+                })
+                .transpose()?;
             if let Some(m) = card {
-                if !matches!(m.kind, ModelKind::Mlcc | ModelKind::DepletionCap) { return Err(format!("incompatible capacitor model on `{name}`")); }
+                if !matches!(m.kind, ModelKind::Mlcc | ModelKind::DepletionCap) {
+                    return Err(format!("incompatible capacitor model on `{name}`"));
+                }
             }
-            for (key, target) in [("c0", c0), ("cmin", c_min), ("vsat", vsat), ("esr", esr), ("esl", esl)] {
+            for (key, target) in [
+                ("c0", c0),
+                ("cmin", c_min),
+                ("vsat", vsat),
+                ("esr", esr),
+                ("esl", esl),
+            ] {
                 let alias = if key == "vsat" { "vbi" } else { key };
-                if let Some(e) = overrides.get(key).or_else(|| overrides.get(alias)).or_else(|| card.and_then(|m| m.params.get(key).or_else(|| m.params.get(alias)))) {
+                if let Some(e) = overrides
+                    .get(key)
+                    .or_else(|| overrides.get(alias))
+                    .or_else(|| {
+                        card.and_then(|m| m.params.get(key).or_else(|| m.params.get(alias)))
+                    })
+                {
                     *target = e.substitute(&const_map, &empty_nodes, None);
                 }
             }
         }
     }
-    let parameter_box: BTreeMap<_, _> = deck.params.iter().map(|p| (p.name.clone(), crate::paving::Iv { lo: p.lo, hi: p.hi })).collect();
+    let parameter_box: BTreeMap<_, _> = deck
+        .params
+        .iter()
+        .map(|p| (p.name.clone(), crate::paving::Iv { lo: p.lo, hi: p.hi }))
+        .collect();
     for element in &resolved_deck.elements {
         let positive: Vec<&Expr> = match element {
             Element::Resistor { r, .. } => vec![r],
             Element::Capacitor { c, .. } => vec![c],
             Element::Inductor { l, .. } => vec![l],
-            Element::Diode { temp_k, vt_override, area, .. } | Element::Bjt { temp_k, vt_override, area, .. } => {
-                let mut v = vec![area]; v.extend(temp_k); v.extend(vt_override); v
+            Element::Diode {
+                temp_k,
+                vt_override,
+                area,
+                ..
             }
-            Element::Mosfet { w, l, nfin, tamb_k, vt_override, .. } => {
-                w.iter().chain(l).chain(nfin).chain(tamb_k).chain(vt_override).collect()
+            | Element::Bjt {
+                temp_k,
+                vt_override,
+                area,
+                ..
+            } => {
+                let mut v = vec![area];
+                v.extend(temp_k);
+                v.extend(vt_override);
+                v
             }
+            Element::Mosfet {
+                w,
+                l,
+                nfin,
+                tamb_k,
+                vt_override,
+                ..
+            } => w
+                .iter()
+                .chain(l)
+                .chain(nfin)
+                .chain(tamb_k)
+                .chain(vt_override)
+                .collect(),
             _ => vec![],
         };
         for expression in positive {
             let expression = expression.substitute(&const_map, &empty_nodes, None);
-            if crate::paving::eval_expr_iv(&expression, &parameter_box).map_or(true, |r| r.lo <= 0.0) {
-                return Err(format!("physical parameter must be positive over its entire box on `{}`", element.name()));
+            if crate::paving::eval_expr_iv(&expression, &parameter_box)
+                .map_or(true, |r| r.lo <= 0.0)
+            {
+                return Err(format!(
+                    "physical parameter must be positive over its entire box on `{}`",
+                    element.name()
+                ));
             }
         }
     }
     if matches!(resolved_deck.mode, AnalysisMode::Tran { .. }) {
         let mut expanded = Vec::new();
         for element in &resolved_deck.elements {
-            let count = match element { Element::PcbMicrostrip {n_seg, ..} | Element::PcbCoupledDiffpair {n_seg, ..} => *n_seg, _ => 1 };
+            let count = match element {
+                Element::PcbMicrostrip { n_seg, .. }
+                | Element::PcbCoupledDiffpair { n_seg, .. } => *n_seg,
+                _ => 1,
+            };
             for k in 0..count {
                 let mut section = element.clone();
                 match (&mut section, element) {
-                    (Element::PcbMicrostrip {name, n_in, n_out, len, n_seg, ..}, Element::PcbMicrostrip {name: base, ..}) => {
-                        if k > 0 { *n_in = format!("{base}_seg{k}"); *name = format!("{base}_seg{k}"); }
-                        if k + 1 < count { *n_out = format!("{base}_seg{}", k+1); }
-                        *len = Expr::div(len.clone(), Expr::num(count as f64)); *n_seg = 1;
-                    }
-                    (Element::PcbCoupledDiffpair {name, in_p, in_n, out_p, out_n, ref_out, len, l_via, l_slot, n_seg, ..}, Element::PcbCoupledDiffpair {name: base, ref_in, ..}) => {
-                        if k > 0 { *in_p = format!("{base}_p_seg{k}"); *in_n = format!("{base}_n_seg{k}"); *name = format!("{base}_seg{k}"); }
-                        if k + 1 < count { *out_p = format!("{base}_p_seg{}", k+1); *out_n = format!("{base}_n_seg{}", k+1); *ref_out = ref_in.clone(); *l_slot = Expr::num(0.0); }
+                    (
+                        Element::PcbMicrostrip {
+                            name,
+                            n_in,
+                            n_out,
+                            len,
+                            n_seg,
+                            ..
+                        },
+                        Element::PcbMicrostrip { name: base, .. },
+                    ) => {
+                        if k > 0 {
+                            *n_in = format!("{base}_seg{k}");
+                            *name = format!("{base}_seg{k}");
+                        }
+                        if k + 1 < count {
+                            *n_out = format!("{base}_seg{}", k + 1);
+                        }
                         *len = Expr::div(len.clone(), Expr::num(count as f64));
-                        if k != 0 { *l_via = Expr::num(0.0); }
+                        *n_seg = 1;
+                    }
+                    (
+                        Element::PcbCoupledDiffpair {
+                            name,
+                            in_p,
+                            in_n,
+                            out_p,
+                            out_n,
+                            ref_out,
+                            len,
+                            l_via,
+                            l_slot,
+                            n_seg,
+                            ..
+                        },
+                        Element::PcbCoupledDiffpair {
+                            name: base, ref_in, ..
+                        },
+                    ) => {
+                        if k > 0 {
+                            *in_p = format!("{base}_p_seg{k}");
+                            *in_n = format!("{base}_n_seg{k}");
+                            *name = format!("{base}_seg{k}");
+                        }
+                        if k + 1 < count {
+                            *out_p = format!("{base}_p_seg{}", k + 1);
+                            *out_n = format!("{base}_n_seg{}", k + 1);
+                            *ref_out = ref_in.clone();
+                            *l_slot = Expr::num(0.0);
+                        }
+                        *len = Expr::div(len.clone(), Expr::num(count as f64));
+                        if k != 0 {
+                            *l_via = Expr::num(0.0);
+                        }
                         *n_seg = 1;
                     }
                     _ => {}
@@ -1576,43 +2076,79 @@ pub fn stamp_deck(deck: &Deck) -> Result<StampedSystem, String> {
 
     let system = match deck.mode {
         AnalysisMode::Dc => stamp_dc_deck(deck, &const_map, explicit_bounds, &unsafe_raw),
-        AnalysisMode::Tran { dt, steps, method } => {
-            stamp_tran_deck(deck, &const_map, explicit_bounds, &unsafe_raw, dt, steps, method)
-        }
+        AnalysisMode::Tran { dt, steps, method } => stamp_tran_deck(
+            deck,
+            &const_map,
+            explicit_bounds,
+            &unsafe_raw,
+            dt,
+            steps,
+            method,
+        ),
     }?;
     let (vars, states): (&[StampedVar], &[OdeState]) = match &system.body {
         StampedBody::Algebraic { vars, .. } => (vars, &[]),
-        StampedBody::Ode { static_vars, states, .. } => (static_vars, states),
+        StampedBody::Ode {
+            static_vars,
+            states,
+            ..
+        } => (static_vars, states),
     };
     for bound in &deck.bounds {
-        if !vars.iter().any(|v| v.name == bound.target) && !states.iter().any(|v| v.name == bound.target) {
-            return Err(format!("unknown or source-pinned bound target `{}`", bound.target));
+        if !vars.iter().any(|v| v.name == bound.target)
+            && !states.iter().any(|v| v.name == bound.target)
+        {
+            return Err(format!(
+                "unknown or source-pinned bound target `{}`",
+                bound.target
+            ));
         }
     }
     for init in &deck.inits {
         if !states.iter().any(|v| v.name == init.target) {
-            return Err(format!("unknown or source-pinned initial target `{}`", init.target));
+            return Err(format!(
+                "unknown or source-pinned initial target `{}`",
+                init.target
+            ));
         }
     }
     let mut identifiers: BTreeSet<String> = deck.params.iter().map(|p| p.name.clone()).collect();
-    for name in vars.iter().map(|v| &v.name).chain(states.iter().map(|v| &v.name)) {
-        if !identifiers.insert(name.clone()) { return Err(format!("colliding stamped identifier `{name}`")); }
+    for name in vars
+        .iter()
+        .map(|v| &v.name)
+        .chain(states.iter().map(|v| &v.name))
+    {
+        if !identifiers.insert(name.clone()) {
+            return Err(format!("colliding stamped identifier `{name}`"));
+        }
     }
     let check = |expression: &Expr| -> Result<(), String> {
         let mut error = None;
         expression.visit(&mut |e| match e {
-            Expr::Num(v) if !v.is_finite() => error = Some("non-finite constant after arithmetic".to_string()),
-            Expr::Var(v) if !identifiers.contains(v) => error = Some(format!("unresolved identifier `{v}`")),
+            Expr::Num(v) if !v.is_finite() => {
+                error = Some("non-finite constant after arithmetic".to_string())
+            }
+            Expr::Var(v) if !identifiers.contains(v) => {
+                error = Some(format!("unresolved identifier `{v}`"))
+            }
             Expr::NodeVolt(v) => error = Some(format!("unlowered node `{v}`")),
             _ => {}
         });
         error.map_or(Ok(()), Err)
     };
-    fn check_formula(f: &Formula, check: &impl Fn(&Expr) -> Result<(), String>) -> Result<(), String> {
+    fn check_formula(
+        f: &Formula,
+        check: &impl Fn(&Expr) -> Result<(), String>,
+    ) -> Result<(), String> {
         match f {
-            Formula::Cmp { lhs, rhs, .. } => { check(lhs)?; check(rhs) }
+            Formula::Cmp { lhs, rhs, .. } => {
+                check(lhs)?;
+                check(rhs)
+            }
             Formula::And(items) | Formula::Or(items) => {
-                for item in items { check_formula(item, check)?; }
+                for item in items {
+                    check_formula(item, check)?;
+                }
                 Ok(())
             }
             Formula::Not(inner) => check_formula(inner, check),
@@ -1620,12 +2156,18 @@ pub fn stamp_deck(deck: &Deck) -> Result<StampedSystem, String> {
     }
     let constraints = match &system.body {
         StampedBody::Algebraic { constraints, .. } => constraints,
-        StampedBody::Ode { static_constraints, .. } => static_constraints,
+        StampedBody::Ode {
+            static_constraints, ..
+        } => static_constraints,
     };
-    for c in constraints { check_formula(&c.formula, &check)?; }
+    for c in constraints {
+        check_formula(&c.formula, &check)?;
+    }
     for state in states {
         check(&state.rhs)?;
-        if let InitSpec::Exact(value) = &state.init { check(value)?; }
+        if let InitSpec::Exact(value) = &state.init {
+            check(value)?;
+        }
     }
     check_formula(&system.unsafe_formula, &check)?;
     Ok(system)
@@ -1669,7 +2211,11 @@ fn stamp_dc_deck(
                 let vp = b.touch_node(n_pos);
                 let vn = b.touch_node(n_neg);
                 let iname = format!("i_{}", sanitize_ident(name));
-                b.ensure_var(&iname, (-50.0, 50.0), format!("Inductor DC current ({name})"));
+                b.ensure_var(
+                    &iname,
+                    (-50.0, 50.0),
+                    format!("Inductor DC current ({name})"),
+                );
                 let il = Expr::var(&iname);
                 let rs = b.lower_expr(&r_ser.substitute(const_map, &empty_nodes, None), name);
                 b.add_eq(
@@ -1696,7 +2242,9 @@ fn stamp_dc_deck(
                 );
                 let iv = Expr::var(&iname);
                 let vsrc = b.lower_expr(
-                    &wave.expr_at(false).substitute(const_map, &empty_nodes, None),
+                    &wave
+                        .expr_at(false)
+                        .substitute(const_map, &empty_nodes, None),
                     name,
                 );
                 b.add_eq(
@@ -1713,7 +2261,9 @@ fn stamp_dc_deck(
                 wave,
             } => {
                 let isrc = b.lower_expr(
-                    &wave.expr_at(false).substitute(const_map, &empty_nodes, None),
+                    &wave
+                        .expr_at(false)
+                        .substitute(const_map, &empty_nodes, None),
                     name,
                 );
                 b.add_branch_current(n_pos, n_neg, isrc);
@@ -1731,15 +2281,16 @@ fn stamp_dc_deck(
                     .models
                     .get(model)
                     .ok_or_else(|| format!("unknown diode model `{model}` on `{name}`"))?;
-                if m.kind != ModelKind::Diode { return Err(format!("incompatible diode model `{model}`")); }
+                if m.kind != ModelKind::Diode {
+                    return Err(format!("incompatible diode model `{model}`"));
+                }
                 let va = b.touch_node(n_anode);
                 let vk = b.touch_node(n_cathode);
                 let is_val = model_param(m, "is", 1.0e-14);
                 let n_id = model_param(m, "n", 1.0);
                 let vt_raw = resolve_vt(vt_override, temp_k, m);
                 let vt_e = b.lower_expr(&vt_raw.substitute(const_map, &empty_nodes, None), name);
-                let area_e =
-                    b.lower_expr(&area.substitute(const_map, &empty_nodes, None), name);
+                let area_e = b.lower_expr(&area.substitute(const_map, &empty_nodes, None), name);
                 let id_name = format!("i_{}", sanitize_ident(name));
                 b.ensure_var(
                     &id_name,
@@ -1748,7 +2299,16 @@ fn stamp_dc_deck(
                 );
                 let id_var = Expr::var(&id_name);
                 let id_rhs = Expr::mul(
-                    temperature_is(area_e, is_val, n_id.clone(), vt_e.clone(), temp_k.as_ref().map(|t| t.substitute(const_map, &BTreeMap::new(), None)), Expr::num(0.0)),
+                    temperature_is(
+                        area_e,
+                        is_val,
+                        n_id.clone(),
+                        vt_e.clone(),
+                        temp_k
+                            .as_ref()
+                            .map(|t| t.substitute(const_map, &BTreeMap::new(), None)),
+                        Expr::num(0.0),
+                    ),
                     Expr::sub(
                         Expr::exp(Expr::div(Expr::sub(va, vk), Expr::mul(n_id, vt_e))),
                         Expr::num(1.0),
@@ -1778,21 +2338,28 @@ fn stamp_dc_deck(
                 tamb_k,
                 ..
             } => {
-                let m = deck
-                    .models
-                    .get(model)
-                    .ok_or_else(|| format!("unknown MOSFET/FinFET/GAA model `{model}` on `{name}`"))?;
+                let m = deck.models.get(model).ok_or_else(|| {
+                    format!("unknown MOSFET/FinFET/GAA model `{model}` on `{name}`")
+                })?;
                 let vd = b.touch_node(n_drain);
                 let vg = b.touch_node(n_gate);
                 let vs = b.touch_node(n_source);
                 let vb = b.touch_node(n_bulk);
 
-                let w_s = w.as_ref().map(|e| e.substitute(const_map, &empty_nodes, None));
-                let l_s = l.as_ref().map(|e| e.substitute(const_map, &empty_nodes, None));
-                let nfin_s = nfin.as_ref().map(|e| e.substitute(const_map, &empty_nodes, None));
+                let w_s = w
+                    .as_ref()
+                    .map(|e| e.substitute(const_map, &empty_nodes, None));
+                let l_s = l
+                    .as_ref()
+                    .map(|e| e.substitute(const_map, &empty_nodes, None));
+                let nfin_s = nfin
+                    .as_ref()
+                    .map(|e| e.substitute(const_map, &empty_nodes, None));
                 let dtfin_s = dtfin_nm.substitute(const_map, &empty_nodes, None);
                 let dvth_s = dvth.substitute(const_map, &empty_nodes, None);
-                let rth_s = rth.as_ref().map(|e| e.substitute(const_map, &empty_nodes, None));
+                let rth_s = rth
+                    .as_ref()
+                    .map(|e| e.substitute(const_map, &empty_nodes, None));
                 let vt_s = vt_override
                     .as_ref()
                     .map(|e| e.substitute(const_map, &empty_nodes, None));
@@ -1833,7 +2400,9 @@ fn stamp_dc_deck(
                     .models
                     .get(model)
                     .ok_or_else(|| format!("unknown BJT/HBT model `{model}` on `{name}`"))?;
-                if !matches!(m.kind, ModelKind::Npn | ModelKind::Pnp | ModelKind::SiGeHbt) { return Err(format!("incompatible BJT model `{model}`")); }
+                if !matches!(m.kind, ModelKind::Npn | ModelKind::Pnp | ModelKind::SiGeHbt) {
+                    return Err(format!("incompatible BJT model `{model}`"));
+                }
                 let vc = b.touch_node(n_col);
                 let vb = b.touch_node(n_base);
                 let ve = b.touch_node(n_emit);
@@ -1843,8 +2412,7 @@ fn stamp_dc_deck(
                 let is0 = model_param(m, "is", 1.0e-16);
                 let bf = model_param(m, "bf", 100.0);
                 let br = model_param(m, "br", 2.0);
-                let area_e =
-                    b.lower_expr(&area.substitute(const_map, &empty_nodes, None), name);
+                let area_e = b.lower_expr(&area.substitute(const_map, &empty_nodes, None), name);
                 let temp_sub = temp_k
                     .as_ref()
                     .map(|e| e.substitute(const_map, &empty_nodes, None));
@@ -1853,9 +2421,27 @@ fn stamp_dc_deck(
                     .map(|e| e.substitute(const_map, &empty_nodes, None));
                 let vt_e = b.lower_expr(&resolve_vt(&vt_sub, &temp_sub, m), name);
 
-                let deg = if is_hbt { deg_ev.as_ref().map(|e| b.lower_expr(&e.substitute(const_map, &empty_nodes, None), name)).unwrap_or_else(|| model_param(m, "deg_ev", 0.085)) } else { Expr::num(0.0) };
-                let is_eff = temperature_is(area_e.clone(), is0, Expr::num(1.0), vt_e.clone(), temp_sub, deg);
-                let vce = if is_pnp { Expr::sub(ve.clone(), vc.clone()) } else { Expr::sub(vc.clone(), ve.clone()) };
+                let deg = if is_hbt {
+                    deg_ev
+                        .as_ref()
+                        .map(|e| b.lower_expr(&e.substitute(const_map, &empty_nodes, None), name))
+                        .unwrap_or_else(|| model_param(m, "deg_ev", 0.085))
+                } else {
+                    Expr::num(0.0)
+                };
+                let is_eff = temperature_is(
+                    area_e.clone(),
+                    is0,
+                    Expr::num(1.0),
+                    vt_e.clone(),
+                    temp_sub,
+                    deg,
+                );
+                let vce = if is_pnp {
+                    Expr::sub(ve.clone(), vc.clone())
+                } else {
+                    Expr::sub(vc.clone(), ve.clone())
+                };
 
                 let (vbe, vbc) = if !is_pnp {
                     (Expr::sub(vb.clone(), ve), Expr::sub(vb, vc))
@@ -1885,7 +2471,14 @@ fn stamp_dc_deck(
                 } else {
                     ifwd_ideal.clone()
                 };
-                let ifwd_col = if let Some(vaf) = m.params.get("vaf") { Expr::mul(ifwd_col, Expr::add(Expr::num(1.0), Expr::div(vce, vaf.clone()))) } else { ifwd_col };
+                let ifwd_col = if let Some(vaf) = m.params.get("vaf") {
+                    Expr::mul(
+                        ifwd_col,
+                        Expr::add(Expr::num(1.0), Expr::div(vce, vaf.clone())),
+                    )
+                } else {
+                    ifwd_col
+                };
                 // Ebers-Moll BC transport is essential in saturation: collector
                 // transport loses I_R + I_R/beta_R while the base gains I_R/beta_R.
                 // Reversing the PNP orientation below preserves terminal KCL.
@@ -1901,8 +2494,16 @@ fn stamp_dc_deck(
                 let ib_mag = Expr::add(Expr::div(ifwd_ideal, bf), Expr::div(irev, br));
                 let ic_name = format!("ic_{sid}");
                 let ib_name = format!("ib_{sid}");
-                b.ensure_var(&ic_name, (-2.0, 2.0), format!("BJT/HBT collector current ({name})"));
-                b.ensure_var(&ib_name, (-1.0, 1.0), format!("BJT/HBT base current ({name})"));
+                b.ensure_var(
+                    &ic_name,
+                    (-2.0, 2.0),
+                    format!("BJT/HBT collector current ({name})"),
+                );
+                b.ensure_var(
+                    &ib_name,
+                    (-1.0, 1.0),
+                    format!("BJT/HBT base current ({name})"),
+                );
                 let ic_var = Expr::var(&ic_name);
                 let ib_var = Expr::var(&ib_name);
 
@@ -2085,7 +2686,11 @@ fn stamp_dc_deck(
     }
 
     // Emit KCL conservation at every non-ground circuit node
-    let kcl_entries: Vec<(String, Expr)> = b.kcl_outflow.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+    let kcl_entries: Vec<(String, Expr)> = b
+        .kcl_outflow
+        .iter()
+        .map(|(k, v)| (k.clone(), v.clone()))
+        .collect();
     for (node, sum_out) in kcl_entries {
         if !matches!(sum_out, Expr::Num(v) if v == 0.0) {
             b.add_eq(
@@ -2124,20 +2729,20 @@ fn stamp_tran_deck(
 ) -> Result<StampedSystem, String> {
     let empty_nodes = BTreeMap::new();
     let mut observables = BTreeMap::new();
-    let mut static_b = AlgebraicBuilder::new(deck.default_vbound, explicit_bounds.clone(), &deck.params);
+    let mut static_b =
+        AlgebraicBuilder::new(deck.default_vbound, explicit_bounds.clone(), &deck.params);
 
     // 1. Identify grounded voltage sources `V<name> <node> 0 <wave>` so their nodes become exact explicit expressions
     let mut fixed_nodes: BTreeMap<String, Expr> = BTreeMap::new();
     for elem in &deck.elements {
         if let Element::VoltageSource {
-            n_pos,
-            n_neg,
-            wave,
-            ..
+            n_pos, n_neg, wave, ..
         } = elem
         {
             if fixed_nodes.contains_key(n_pos) || fixed_nodes.contains_key(n_neg) {
-                return Err("multiple grounded voltage sources drive the same transient node".to_string());
+                return Err(
+                    "multiple grounded voltage sources drive the same transient node".to_string(),
+                );
             }
             if is_ground_node(n_neg) && !is_ground_node(n_pos) {
                 fixed_nodes.insert(
@@ -2201,18 +2806,14 @@ fn stamp_tran_deck(
             (true, true) => {}
             (false, true) => {
                 dyn_nodes.insert(n1.to_string());
-                let prev = node_cap_gnd
-                    .remove(n1)
-                    .unwrap_or_else(|| Expr::num(0.0));
+                let prev = node_cap_gnd.remove(n1).unwrap_or_else(|| Expr::num(0.0));
                 node_cap_gnd.insert(n1.to_string(), Expr::add(prev, c_val.clone()));
                 // If n2 is a time-varying driven voltage source `V(t)` (STEP/GAUSS), add `C * dV/dt`!
                 if !is_ground_node(n2) {
                     if let Some(v_drv) = fixed_nodes.get(n2) {
                         let dv_dt = symbolic_time_deriv(v_drv);
                         if !matches!(dv_dt, Expr::Num(v) if v == 0.0) {
-                            let prev_i = node_i_into
-                                .remove(n1)
-                                .unwrap_or_else(|| Expr::num(0.0));
+                            let prev_i = node_i_into.remove(n1).unwrap_or_else(|| Expr::num(0.0));
                             node_i_into
                                 .insert(n1.to_string(), Expr::add(prev_i, Expr::mul(c_val, dv_dt)));
                         }
@@ -2221,17 +2822,13 @@ fn stamp_tran_deck(
             }
             (true, false) => {
                 dyn_nodes.insert(n2.to_string());
-                let prev = node_cap_gnd
-                    .remove(n2)
-                    .unwrap_or_else(|| Expr::num(0.0));
+                let prev = node_cap_gnd.remove(n2).unwrap_or_else(|| Expr::num(0.0));
                 node_cap_gnd.insert(n2.to_string(), Expr::add(prev, c_val.clone()));
                 if !is_ground_node(n1) {
                     if let Some(v_drv) = fixed_nodes.get(n1) {
                         let dv_dt = symbolic_time_deriv(v_drv);
                         if !matches!(dv_dt, Expr::Num(v) if v == 0.0) {
-                            let prev_i = node_i_into
-                                .remove(n2)
-                                .unwrap_or_else(|| Expr::num(0.0));
+                            let prev_i = node_i_into.remove(n2).unwrap_or_else(|| Expr::num(0.0));
                             node_i_into
                                 .insert(n2.to_string(), Expr::add(prev_i, Expr::mul(c_val, dv_dt)));
                         }
@@ -2246,27 +2843,22 @@ fn stamp_tran_deck(
         }
     };
 
-    let add_current_into =
-        |n_from: &str,
-         n_to: &str,
-         i_expr: Expr,
-         dyn_nodes: &mut BTreeSet<String>,
-         node_i_into: &mut BTreeMap<String, Expr>| {
-            if !is_ground_node(n_from) && !fixed_nodes.contains_key(n_from) {
-                dyn_nodes.insert(n_from.to_string());
-                let prev = node_i_into
-                    .remove(n_from)
-                    .unwrap_or_else(|| Expr::num(0.0));
-                node_i_into.insert(n_from.to_string(), Expr::sub(prev, i_expr.clone()));
-            }
-            if !is_ground_node(n_to) && !fixed_nodes.contains_key(n_to) {
-                dyn_nodes.insert(n_to.to_string());
-                let prev = node_i_into
-                    .remove(n_to)
-                    .unwrap_or_else(|| Expr::num(0.0));
-                node_i_into.insert(n_to.to_string(), Expr::add(prev, i_expr));
-            }
-        };
+    let add_current_into = |n_from: &str,
+                            n_to: &str,
+                            i_expr: Expr,
+                            dyn_nodes: &mut BTreeSet<String>,
+                            node_i_into: &mut BTreeMap<String, Expr>| {
+        if !is_ground_node(n_from) && !fixed_nodes.contains_key(n_from) {
+            dyn_nodes.insert(n_from.to_string());
+            let prev = node_i_into.remove(n_from).unwrap_or_else(|| Expr::num(0.0));
+            node_i_into.insert(n_from.to_string(), Expr::sub(prev, i_expr.clone()));
+        }
+        if !is_ground_node(n_to) && !fixed_nodes.contains_key(n_to) {
+            dyn_nodes.insert(n_to.to_string());
+            let prev = node_i_into.remove(n_to).unwrap_or_else(|| Expr::num(0.0));
+            node_i_into.insert(n_to.to_string(), Expr::add(prev, i_expr));
+        }
+    };
 
     for elem in &deck.elements {
         match elem {
@@ -2320,7 +2912,11 @@ fn stamp_tran_deck(
                 let esl_e =
                     static_b.lower_expr(&esl.substitute(const_map, &fixed_nodes, None), name);
 
-                let depletion = model.as_ref().and_then(|m| deck.models.get(m)).is_some_and(|m| m.kind == ModelKind::DepletionCap) || name.to_ascii_lowercase().starts_with("c_gd");
+                let depletion = model
+                    .as_ref()
+                    .and_then(|m| deck.models.get(m))
+                    .is_some_and(|m| m.kind == ModelKind::DepletionCap)
+                    || name.to_ascii_lowercase().starts_with("c_gd");
                 let has_esl = !matches!(esl_e, Expr::Num(v) if v == 0.0);
                 if has_esl {
                     // Full parasitic series R_esr + L_esl + nonlinear C_eff(vc) branch!
@@ -2361,10 +2957,15 @@ fn stamp_tran_deck(
                     let vc = Expr::var(&vc_name);
                     let current = Expr::div(Expr::sub(Expr::sub(vp, vn), vc.clone()), esr_e);
                     let ceff = nonlinear_cap(c0_e, cmin_e, vsat_e, vc, depletion);
-                    extra_states.push((vc_name.clone(),
-                        explicit_bounds.get(&vc_name).copied().unwrap_or(deck.default_vbound),
+                    extra_states.push((
+                        vc_name.clone(),
+                        explicit_bounds
+                            .get(&vc_name)
+                            .copied()
+                            .unwrap_or(deck.default_vbound),
                         Expr::div(current.clone(), ceff),
-                        format!("Series-ESR nonlinear capacitor voltage [V] ({name})")));
+                        format!("Series-ESR nonlinear capacitor voltage [V] ({name})"),
+                    ));
                     add_current_into(n_pos, n_neg, current, &mut dyn_nodes, &mut node_i_into);
                 } else {
                     // Pure voltage-dependent nonlinear capacitance C(v) = C_min + C0 / (1 + (v/Vsat)^2)
@@ -2397,7 +2998,10 @@ fn stamp_tran_deck(
                     v_across: Expr::sub(vp, vn),
                     l_expr: l_e,
                     r_ser: rs_e,
-                    bounds: explicit_bounds.get(&iname).copied().unwrap_or((-25.0, 25.0)),
+                    bounds: explicit_bounds
+                        .get(&iname)
+                        .copied()
+                        .unwrap_or((-25.0, 25.0)),
                 });
                 add_current_into(n_pos, n_neg, ivar, &mut dyn_nodes, &mut node_i_into);
             }
@@ -2411,10 +3015,7 @@ fn stamp_tran_deck(
                 couplings.push((l1_name.clone(), l2_name.clone(), k_e));
             }
             Element::CurrentSource {
-                n_pos,
-                n_neg,
-                wave,
-                ..
+                n_pos, n_neg, wave, ..
             } => {
                 let isrc = wave.expr_at(true).substitute(const_map, &fixed_nodes, None);
                 add_current_into(n_pos, n_neg, isrc, &mut dyn_nodes, &mut node_i_into);
@@ -2432,7 +3033,9 @@ fn stamp_tran_deck(
                     .models
                     .get(model)
                     .ok_or_else(|| format!("unknown diode model `{model}` on `{name}`"))?;
-                if m.kind != ModelKind::Diode { return Err(format!("incompatible diode model `{model}`")); }
+                if m.kind != ModelKind::Diode {
+                    return Err(format!("incompatible diode model `{model}`"));
+                }
                 let va = node_expr(n_anode, &mut dyn_nodes);
                 let vk = node_expr(n_cathode, &mut dyn_nodes);
                 let is_val = model_param(m, "is", 1.0e-14);
@@ -2444,13 +3047,28 @@ fn stamp_tran_deck(
                 let area_e =
                     static_b.lower_expr(&area.substitute(const_map, &fixed_nodes, None), name);
                 let id_expr = Expr::mul(
-                    temperature_is(area_e, is_val, n_id.clone(), vt_e.clone(), temp_k.as_ref().map(|t| t.substitute(const_map, &BTreeMap::new(), None)), Expr::num(0.0)),
+                    temperature_is(
+                        area_e,
+                        is_val,
+                        n_id.clone(),
+                        vt_e.clone(),
+                        temp_k
+                            .as_ref()
+                            .map(|t| t.substitute(const_map, &BTreeMap::new(), None)),
+                        Expr::num(0.0),
+                    ),
                     Expr::sub(
                         Expr::exp(Expr::div(Expr::sub(va, vk), Expr::mul(n_id, vt_e))),
                         Expr::num(1.0),
                     ),
                 );
-                add_current_into(n_anode, n_cathode, id_expr, &mut dyn_nodes, &mut node_i_into);
+                add_current_into(
+                    n_anode,
+                    n_cathode,
+                    id_expr,
+                    &mut dyn_nodes,
+                    &mut node_i_into,
+                );
             }
             Element::Mosfet {
                 name,
@@ -2478,12 +3096,20 @@ fn stamp_tran_deck(
                 let vs = node_expr(n_source, &mut dyn_nodes);
                 let vb = node_expr(n_bulk, &mut dyn_nodes);
 
-                let w_s = w.as_ref().map(|e| e.substitute(const_map, &fixed_nodes, None));
-                let l_s = l.as_ref().map(|e| e.substitute(const_map, &fixed_nodes, None));
-                let nfin_s = nfin.as_ref().map(|e| e.substitute(const_map, &fixed_nodes, None));
+                let w_s = w
+                    .as_ref()
+                    .map(|e| e.substitute(const_map, &fixed_nodes, None));
+                let l_s = l
+                    .as_ref()
+                    .map(|e| e.substitute(const_map, &fixed_nodes, None));
+                let nfin_s = nfin
+                    .as_ref()
+                    .map(|e| e.substitute(const_map, &fixed_nodes, None));
                 let dtfin_s = dtfin_nm.substitute(const_map, &fixed_nodes, None);
                 let dvth_s = dvth.substitute(const_map, &fixed_nodes, None);
-                let rth_s = rth.as_ref().map(|e| e.substitute(const_map, &fixed_nodes, None));
+                let rth_s = rth
+                    .as_ref()
+                    .map(|e| e.substitute(const_map, &fixed_nodes, None));
                 let vt_s = vt_override
                     .as_ref()
                     .map(|e| e.substitute(const_map, &fixed_nodes, None));
@@ -2512,20 +3138,31 @@ fn stamp_tran_deck(
                 observables.insert(format!("i_{}", sanitize_ident(name)), ids.clone());
                 add_current_into(n_drain, n_source, ids, &mut dyn_nodes, &mut node_i_into);
 
-                if let Some(c) = m.params.get("c_miller") { add_cap(n_gate, n_drain, c.clone(), &mut dyn_nodes, &mut node_i_into); }
-                if let Some(c) = m.params.get("c_gate") { add_cap(n_gate, n_source, c.clone(), &mut dyn_nodes, &mut node_i_into); }
+                if let Some(c) = m.params.get("c_miller") {
+                    add_cap(n_gate, n_drain, c.clone(), &mut dyn_nodes, &mut node_i_into);
+                }
+                if let Some(c) = m.params.get("c_gate") {
+                    add_cap(
+                        n_gate,
+                        n_source,
+                        c.clone(),
+                        &mut dyn_nodes,
+                        &mut node_i_into,
+                    );
+                }
                 // For 2nm GAA nanosheet (`gt2n`), stamp inner-spacer fringing capacitance C_isp(dL_isp)
                 // across gate-to-source/rail (Miller-equivalent 2*C_isp) and drain-to-source/rail (C_isp).
                 if matches!(m.kind, ModelKind::GaaNmos | ModelKind::GaaPmos) {
                     let lisp0 = model_param(m, "lisp_nm", 5.5);
                     let dlisp = static_b
                         .lower_expr(&dlisp_nm.substitute(const_map, &fixed_nodes, None), name);
-                    let nsh = static_b.lower_expr(nfin_s.as_ref().unwrap_or(&model_param(m, "nsheet", 3.0)), name);
-                    // ~0.18 fF*nm / (L_isp0 + dL_isp) per stacked sheet
-                    let c_isp = Expr::div(
-                        Expr::mul(Expr::num(1.8e-16), nsh),
-                        Expr::add(lisp0, dlisp),
+                    let nsh = static_b.lower_expr(
+                        nfin_s.as_ref().unwrap_or(&model_param(m, "nsheet", 3.0)),
+                        name,
                     );
+                    // ~0.18 fF*nm / (L_isp0 + dL_isp) per stacked sheet
+                    let c_isp =
+                        Expr::div(Expr::mul(Expr::num(1.8e-16), nsh), Expr::add(lisp0, dlisp));
                     add_cap(
                         n_gate,
                         n_source,
@@ -2533,7 +3170,13 @@ fn stamp_tran_deck(
                         &mut dyn_nodes,
                         &mut node_i_into,
                     );
-                    add_cap(n_gate, n_drain, Expr::mul(Expr::num(0.5), c_isp), &mut dyn_nodes, &mut node_i_into);
+                    add_cap(
+                        n_gate,
+                        n_drain,
+                        Expr::mul(Expr::num(0.5), c_isp),
+                        &mut dyn_nodes,
+                        &mut node_i_into,
+                    );
                 }
             }
             Element::PcbMicrostrip {
@@ -2564,7 +3207,13 @@ fn stamp_tran_deck(
                     &sigma_cu.substitute(const_map, &fixed_nodes, None),
                 );
                 let c_half = Expr::mul(Expr::num(0.5), ctot);
-                add_cap(n_in, n_ref, c_half.clone(), &mut dyn_nodes, &mut node_i_into);
+                add_cap(
+                    n_in,
+                    n_ref,
+                    c_half.clone(),
+                    &mut dyn_nodes,
+                    &mut node_i_into,
+                );
                 add_cap(n_out, n_ref, c_half, &mut dyn_nodes, &mut node_i_into);
 
                 let sid = sanitize_ident(name);
@@ -2621,22 +3270,40 @@ fn stamp_tran_deck(
                     &er_n.substitute(const_map, &fixed_nodes, None),
                     &sigma_cu.substitute(const_map, &fixed_nodes, None),
                 );
-                let lvia_e = static_b
-                    .lower_expr(&l_via.substitute(const_map, &fixed_nodes, None), name);
-                let lslot_e = static_b
-                    .lower_expr(&l_slot.substitute(const_map, &fixed_nodes, None), name);
-                let rret_e = static_b
-                    .lower_expr(&r_ret.substitute(const_map, &fixed_nodes, None), name);
+                let lvia_e =
+                    static_b.lower_expr(&l_via.substitute(const_map, &fixed_nodes, None), name);
+                let lslot_e =
+                    static_b.lower_expr(&l_slot.substitute(const_map, &fixed_nodes, None), name);
+                let rret_e =
+                    static_b.lower_expr(&r_ret.substitute(const_map, &fixed_nodes, None), name);
 
                 // Pi-section self & mutual capacitances at launch and receiver ends
                 let cp_half = Expr::mul(Expr::num(0.5), c_p);
                 let cn_half = Expr::mul(Expr::num(0.5), c_n);
                 let cm_half = Expr::mul(Expr::num(0.5), cm);
-                add_cap(in_p, ref_in, cp_half.clone(), &mut dyn_nodes, &mut node_i_into);
+                add_cap(
+                    in_p,
+                    ref_in,
+                    cp_half.clone(),
+                    &mut dyn_nodes,
+                    &mut node_i_into,
+                );
                 add_cap(out_p, ref_out, cp_half, &mut dyn_nodes, &mut node_i_into);
-                add_cap(in_n, ref_in, cn_half.clone(), &mut dyn_nodes, &mut node_i_into);
+                add_cap(
+                    in_n,
+                    ref_in,
+                    cn_half.clone(),
+                    &mut dyn_nodes,
+                    &mut node_i_into,
+                );
                 add_cap(out_n, ref_out, cn_half, &mut dyn_nodes, &mut node_i_into);
-                add_cap(in_p, in_n, cm_half.clone(), &mut dyn_nodes, &mut node_i_into);
+                add_cap(
+                    in_p,
+                    in_n,
+                    cm_half.clone(),
+                    &mut dyn_nodes,
+                    &mut node_i_into,
+                );
                 add_cap(out_p, out_n, cm_half, &mut dyn_nodes, &mut node_i_into);
 
                 // Coupled p/n trace series inductances (including via backdrill stub inductance L_via)
@@ -2656,7 +3323,10 @@ fn stamp_tran_deck(
                     v_across: Expr::sub(vip, vop),
                     l_expr: lp_tot,
                     r_ser: rdc.clone(),
-                    bounds: explicit_bounds.get(&ip_name).copied().unwrap_or((-5.0, 5.0)),
+                    bounds: explicit_bounds
+                        .get(&ip_name)
+                        .copied()
+                        .unwrap_or((-5.0, 5.0)),
                 });
                 ind_branches.push(IndBranch {
                     state_name: in_name.clone(),
@@ -2664,7 +3334,10 @@ fn stamp_tran_deck(
                     v_across: Expr::sub(vin, von),
                     l_expr: ln_tot,
                     r_ser: rdc_n,
-                    bounds: explicit_bounds.get(&in_name).copied().unwrap_or((-5.0, 5.0)),
+                    bounds: explicit_bounds
+                        .get(&in_name)
+                        .copied()
+                        .unwrap_or((-5.0, 5.0)),
                 });
                 let _ = kc;
                 physical_mutual.push((format!("{name}_p"), format!("{name}_n"), lm));
@@ -2819,10 +3492,7 @@ fn stamp_tran_deck(
                     Expr::mul(Expr::add(c1, cm.clone()), i0.clone()),
                     Expr::mul(cm.clone(), i1.clone()),
                 );
-                let num1 = Expr::add(
-                    Expr::mul(Expr::add(c0, cm.clone()), i1),
-                    Expr::mul(cm, i0),
-                );
+                let num1 = Expr::add(Expr::mul(Expr::add(c0, cm.clone()), i1), Expr::mul(cm, i0));
                 dv_dt_by_node.insert(n0.clone(), Expr::div(num0, det.clone()));
                 dv_dt_by_node.insert(n1.clone(), Expr::div(num1, det));
             }
@@ -2946,11 +3616,35 @@ fn stamp_tran_deck(
     let mut coupled_map: BTreeMap<String, (String, Expr)> = BTreeMap::new();
     for (l1n, l2n, k_e) in &couplings {
         if l1n == l2n || coupled_map.contains_key(l1n) || coupled_map.contains_key(l2n) {
-            return Err("coupled inductors must use disjoint pairs of distinct windings".to_string());
+            return Err(
+                "coupled inductors must use disjoint pairs of distinct windings".to_string(),
+            );
         }
-        let env = deck.params.iter().map(|p| (p.name.clone(), crate::paving::Iv { lo: p.lo, hi: p.hi }))
-            .chain(static_b.vars.iter().filter_map(|v| v.bounds.map(|(lo, hi)| (v.name.clone(), crate::paving::Iv { lo, hi })))).collect();
-        let resolved_k = if let Expr::Var(name) = k_e { static_b.constraints.iter().find_map(|c| match &c.formula { Formula::Cmp {op: CmpOp::Eq, lhs: Expr::Var(n), rhs} if n == name => Some(rhs), _ => None }).unwrap_or(k_e) } else { k_e };
+        let env = deck
+            .params
+            .iter()
+            .map(|p| (p.name.clone(), crate::paving::Iv { lo: p.lo, hi: p.hi }))
+            .chain(static_b.vars.iter().filter_map(|v| {
+                v.bounds
+                    .map(|(lo, hi)| (v.name.clone(), crate::paving::Iv { lo, hi }))
+            }))
+            .collect();
+        let resolved_k = if let Expr::Var(name) = k_e {
+            static_b
+                .constraints
+                .iter()
+                .find_map(|c| match &c.formula {
+                    Formula::Cmp {
+                        op: CmpOp::Eq,
+                        lhs: Expr::Var(n),
+                        rhs,
+                    } if n == name => Some(rhs),
+                    _ => None,
+                })
+                .unwrap_or(k_e)
+        } else {
+            k_e
+        };
         let range = crate::paving::eval_expr_iv(resolved_k, &env)
             .ok_or("cannot validate coupling coefficient")?;
         if range.lo <= -1.0 || range.hi >= 1.0 {
@@ -2960,7 +3654,10 @@ fn stamp_tran_deck(
         coupled_map.insert(l2n.clone(), (l1n.clone(), k_e.clone()));
     }
     let mut direct_mutual = BTreeMap::new();
-    for (a, b, m) in physical_mutual { direct_mutual.insert(a.clone(), (b.clone(), m.clone())); direct_mutual.insert(b, (a, m)); }
+    for (a, b, m) in physical_mutual {
+        direct_mutual.insert(a.clone(), (b.clone(), m.clone()));
+        direct_mutual.insert(b, (a, m));
+    }
     let ind_by_elem: BTreeMap<String, IndBranch> = ind_branches
         .iter()
         .map(|ib| (ib.elem_name.clone(), ib.clone()))
@@ -2971,7 +3668,10 @@ fn stamp_tran_deck(
             ib.v_across.clone(),
             Expr::mul(ib.r_ser.clone(), Expr::var(&ib.state_name)),
         );
-        let rhs = if let Some((partner_name, k_e)) = coupled_map.get(&ib.elem_name).or_else(|| direct_mutual.get(&ib.elem_name)) {
+        let rhs = if let Some((partner_name, k_e)) = coupled_map
+            .get(&ib.elem_name)
+            .or_else(|| direct_mutual.get(&ib.elem_name))
+        {
             let pb = ind_by_elem
                 .get(partner_name)
                 .ok_or_else(|| format!("coupled inductor `{partner_name}` not found"))?;
@@ -2981,18 +3681,32 @@ fn stamp_tran_deck(
             );
             // Preserve winding polarity: M = k * sqrt(L1 * L2).
             let pair_key = if ib.elem_name <= *partner_name {
-                format!("M_{}_{}", sanitize_ident(&ib.elem_name), sanitize_ident(partner_name))
+                format!(
+                    "M_{}_{}",
+                    sanitize_ident(&ib.elem_name),
+                    sanitize_ident(partner_name)
+                )
             } else {
-                format!("M_{}_{}", sanitize_ident(partner_name), sanitize_ident(&ib.elem_name))
+                format!(
+                    "M_{}_{}",
+                    sanitize_ident(partner_name),
+                    sanitize_ident(&ib.elem_name)
+                )
             };
-            let m_var = if direct_mutual.contains_key(&ib.elem_name) { k_e.clone() } else {
-            let root = static_b.positive_sqrt(
-                &pair_key,
-                (0.0, 1.0e-3),
-                Expr::mul(ib.l_expr.clone(), pb.l_expr.clone()),
-                &format!("Mutual inductance M between {} and {}", ib.elem_name, partner_name),
-            );
-            Expr::mul(k_e.clone(), root) };
+            let m_var = if direct_mutual.contains_key(&ib.elem_name) {
+                k_e.clone()
+            } else {
+                let root = static_b.positive_sqrt(
+                    &pair_key,
+                    (0.0, 1.0e-3),
+                    Expr::mul(ib.l_expr.clone(), pb.l_expr.clone()),
+                    &format!(
+                        "Mutual inductance M between {} and {}",
+                        ib.elem_name, partner_name
+                    ),
+                );
+                Expr::mul(k_e.clone(), root)
+            };
             let det = Expr::sub(
                 Expr::mul(ib.l_expr.clone(), pb.l_expr.clone()),
                 Expr::sq(m_var.clone()),
@@ -3017,7 +3731,10 @@ fn stamp_tran_deck(
             hi: ib.bounds.1,
             init,
             rhs,
-            comment: format!("Inductor / interconnect branch current ({}) [A]", ib.elem_name),
+            comment: format!(
+                "Inductor / interconnect branch current ({}) [A]",
+                ib.elem_name
+            ),
         });
     }
 
@@ -3041,7 +3758,9 @@ fn stamp_tran_deck(
     for dn in &dyn_nodes {
         node_to_state.insert(dn.clone(), Expr::var(format!("v_{}", sanitize_ident(dn))));
     }
-    let unsafe_mapped = unsafe_raw.substitute(const_map, &node_to_state, None).substitute(&observables, &BTreeMap::new(), None);
+    let unsafe_mapped = unsafe_raw
+        .substitute(const_map, &node_to_state, None)
+        .substitute(&observables, &BTreeMap::new(), None);
 
     Ok(StampedSystem {
         title: deck.title.clone(),
@@ -3079,11 +3798,17 @@ fn symbolic_time_deriv(e: &Expr) -> Expr {
             Expr::div(num, Expr::sq((**b).clone()))
         }
         Expr::Exp(a) => Expr::mul(Expr::exp((**a).clone()), symbolic_time_deriv(a)),
-        Expr::Sqrt(a) => Expr::div(symbolic_time_deriv(a), Expr::mul(Expr::num(2.0), Expr::sqrt((**a).clone()))),
+        Expr::Sqrt(a) => Expr::div(
+            symbolic_time_deriv(a),
+            Expr::mul(Expr::num(2.0), Expr::sqrt((**a).clone())),
+        ),
         Expr::Ln1pExp(a) => {
             let da = symbolic_time_deriv(a);
             let ez = Expr::exp((**a).clone());
-            Expr::div(Expr::mul(ez, da), Expr::add(Expr::num(1.0), Expr::exp((**a).clone())))
+            Expr::div(
+                Expr::mul(ez, da),
+                Expr::add(Expr::num(1.0), Expr::exp((**a).clone())),
+            )
         }
     }
 }

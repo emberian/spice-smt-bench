@@ -84,7 +84,9 @@ pub struct PdkProfile {
 /// Infinite-well confinement coefficient in V nm², using the transverse mass / m_e.
 fn confinement_alpha(relative_mass: f64) -> f64 {
     let hbar: f64 = 1.054_571_817e-34;
-    hbar.powi(2) * std::f64::consts::PI.powi(2) / (2.0 * 1.602_176_634e-19 * relative_mass * 9.109_383_701_5e-31) * 1e18
+    hbar.powi(2) * std::f64::consts::PI.powi(2)
+        / (2.0 * 1.602_176_634e-19 * relative_mass * 9.109_383_701_5e-31)
+        * 1e18
 }
 
 fn model_card(name: &str, kind: ModelKind, kvs: &[(&str, f64)]) -> ModelDecl {

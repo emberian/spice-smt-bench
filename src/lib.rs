@@ -6,8 +6,8 @@
 pub mod ast;
 pub mod emit_lean;
 pub mod emit_smt2;
-pub mod parser;
 pub mod numeral;
+pub mod parser;
 pub mod paving;
 pub mod pdk;
 pub mod stamp;
@@ -41,12 +41,21 @@ pub fn compile_str_with_options(
     }
     let overridden;
     let source = if let Some(pdk) = pdk_override {
-        let lines = source.lines().filter(|line| {
-            !line.split_whitespace().next().is_some_and(|head| head.eq_ignore_ascii_case(".pdk"))
-        }).collect::<Vec<_>>().join("\n");
+        let lines = source
+            .lines()
+            .filter(|line| {
+                !line
+                    .split_whitespace()
+                    .next()
+                    .is_some_and(|head| head.eq_ignore_ascii_case(".pdk"))
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
         overridden = format!(".pdk {}\n{lines}", pdk.canonical_name());
         &overridden
-    } else { source };
+    } else {
+        source
+    };
     let deck = parser::parse_deck(source)?;
     let sys = stamp::stamp_deck(&deck)?;
     match dialect {

@@ -127,8 +127,8 @@ fn test_verify_paving_sound_and_rejects_tampering() {
     assert_eq!(rep.physics_refuted_leaves, 2);
 
     // Tamper 1: claim the entire root box refutes `.unsafe` without splitting -> must fail!
-    let bad_root = paving::parse_paving_json(r#"{"type": "leaf", "reason": "unsafe_false"}"#)
-        .unwrap();
+    let bad_root =
+        paving::parse_paving_json(r#"{"type": "leaf", "reason": "unsafe_false"}"#).unwrap();
     assert!(
         paving::verify_paving(&sys, &bad_root).is_err(),
         "unsound single-leaf paving must be rejected"
@@ -184,27 +184,39 @@ Rsec sec 0   100.0
 
 /// Relative residual against the magnitudes of additive equation terms. This
 /// prevents ampere-scale tolerances from accepting unsolved pF/nH equations.
-fn equation_scale(lhs: &Expr, rhs: &Expr, env: &BTreeMap<String, f64>, t: f64) -> Result<f64, String> {
+fn equation_scale(
+    lhs: &Expr,
+    rhs: &Expr,
+    env: &BTreeMap<String, f64>,
+    t: f64,
+) -> Result<f64, String> {
     fn magnitude(e: &Expr, env: &BTreeMap<String, f64>, t: f64) -> Result<f64, String> {
         match e {
-            Expr::Add(a,b) | Expr::Sub(a,b) => Ok(magnitude(a,env,t)? + magnitude(b,env,t)?),
-            Expr::Neg(a) => magnitude(a,env,t),
-            Expr::Mul(a,b) => Ok(magnitude(a,env,t)? * magnitude(b,env,t)?),
-            Expr::Div(a,b) => Ok(magnitude(a,env,t)? / b.eval_f64(env,t)?.abs()),
-            _ => Ok(e.eval_f64(env,t)?.abs()),
+            Expr::Add(a, b) | Expr::Sub(a, b) => Ok(magnitude(a, env, t)? + magnitude(b, env, t)?),
+            Expr::Neg(a) => magnitude(a, env, t),
+            Expr::Mul(a, b) => Ok(magnitude(a, env, t)? * magnitude(b, env, t)?),
+            Expr::Div(a, b) => Ok(magnitude(a, env, t)? / b.eval_f64(env, t)?.abs()),
+            _ => Ok(e.eval_f64(env, t)?.abs()),
         }
     }
-    Ok(magnitude(lhs,env,t)?.max(magnitude(rhs,env,t)?).max(1e-10))
+    Ok(magnitude(lhs, env, t)?
+        .max(magnitude(rhs, env, t)?)
+        .max(1e-10))
 }
 
-fn equation_residual(lhs: &Expr, rhs: &Expr, env: &BTreeMap<String, f64>, t: f64) -> Result<f64, String> {
-    let lv = lhs.eval_f64(env,t)?;
-    let rv = rhs.eval_f64(env,t)?;
-    let scale = equation_scale(lhs,rhs,env,t)?;
+fn equation_residual(
+    lhs: &Expr,
+    rhs: &Expr,
+    env: &BTreeMap<String, f64>,
+    t: f64,
+) -> Result<f64, String> {
+    let lv = lhs.eval_f64(env, t)?;
+    let rv = rhs.eval_f64(env, t)?;
+    let scale = equation_scale(lhs, rhs, env, t)?;
     if lv.is_nan() || rv.is_nan() || !lv.is_finite() || !rv.is_finite() || !scale.is_finite() {
         return Err("non-finite equation operand".into());
     }
-    Ok((lv-rv)/scale)
+    Ok((lv - rv) / scale)
 }
 
 /// Damped Newton-Raphson solver on a `StampedSystem`'s equality constraints for witness / non-vacuity checks.
@@ -216,19 +228,30 @@ fn solve_equality_system(
     t: f64,
 ) -> Option<BTreeMap<String, f64>> {
     let n = var_names.len();
-    assert_eq!(n, eqs.len(), "square system expected: vars={n}, eqs={}", eqs.len());
+    assert_eq!(
+        n,
+        eqs.len(),
+        "square system expected: vars={n}, eqs={}",
+        eqs.len()
+    );
     let mut env = fixed_params.clone();
     for vn in var_names {
         let val = init_guess.get(vn).copied().unwrap_or(0.2);
         env.insert(vn.clone(), val);
     }
 
-    let scales: Vec<_> = eqs.iter().map(|(l,r)| equation_scale(l,r,&env,t).map(|v| v.clamp(1e-7,1.0))).collect::<Result<_,_>>().ok()?;
+    let scales: Vec<_> = eqs
+        .iter()
+        .map(|(l, r)| equation_scale(l, r, &env, t).map(|v| v.clamp(1e-7, 1.0)))
+        .collect::<Result<_, _>>()
+        .ok()?;
     let eval_res = |e_map: &BTreeMap<String, f64>| -> Result<Vec<f64>, String> {
         let mut r = Vec::with_capacity(n);
         for ((lhs, rhs), scale) in eqs.iter().zip(&scales) {
             let residual = (lhs.eval_f64(e_map, t)? - rhs.eval_f64(e_map, t)?) / scale;
-            if !residual.is_finite() { return Err("non-finite Newton residual".into()); }
+            if !residual.is_finite() {
+                return Err("non-finite Newton residual".into());
+            }
             r.push(residual);
         }
         Ok(r)
@@ -270,7 +293,10 @@ fn solve_equality_system(
                 }
             }
             if aug[piv][col].abs() < 1.0e-28 {
-                eprintln!("  [diag-piv] singular col={col} ({}) piv={}", var_names[col], aug[piv][col]);
+                eprintln!(
+                    "  [diag-piv] singular col={col} ({}) piv={}",
+                    var_names[col], aug[piv][col]
+                );
                 return None;
             }
             aug.swap(col, piv);
@@ -346,23 +372,60 @@ fn simulate_stamped(
     param_vals: &BTreeMap<String, f64>,
     dc_seed: &BTreeMap<String, f64>,
 ) -> Option<(BTreeMap<String, f64>, bool)> {
-    let constraints = match &sys.body { StampedBody::Algebraic {constraints, ..} => constraints, StampedBody::Ode {static_constraints, ..} => static_constraints };
+    let constraints = match &sys.body {
+        StampedBody::Algebraic { constraints, .. } => constraints,
+        StampedBody::Ode {
+            static_constraints, ..
+        } => static_constraints,
+    };
     let mut known = param_vals.clone();
     for _ in 0..constraints.len() {
         let before = known.len();
         for c in constraints {
-            if let Formula::Cmp {op: CmpOp::Eq, lhs, rhs} = &c.formula {
+            if let Formula::Cmp {
+                op: CmpOp::Eq,
+                lhs,
+                rhs,
+            } = &c.formula
+            {
                 let candidate = match lhs {
                     Expr::Var(n) => rhs.eval_f64(&known, 0.0).ok().map(|v| (n, v)),
-                    Expr::Exp(a) => if let Expr::Var(n) = a.as_ref() { rhs.eval_f64(&known, 0.0).ok().map(|v| (n, v.ln())) } else { None },
-                    Expr::Mul(a,b) if a == b => if let Expr::Var(n) = a.as_ref() { rhs.eval_f64(&known, 0.0).ok().map(|v| (n, v.sqrt())) } else { None },
-                    Expr::Mul(a,b) => if let Expr::Var(n) = a.as_ref() { rhs.eval_f64(&known, 0.0).ok().zip(b.eval_f64(&known, 0.0).ok()).map(|(r,d)| (n, r/d)) } else { None },
+                    Expr::Exp(a) => {
+                        if let Expr::Var(n) = a.as_ref() {
+                            rhs.eval_f64(&known, 0.0).ok().map(|v| (n, v.ln()))
+                        } else {
+                            None
+                        }
+                    }
+                    Expr::Mul(a, b) if a == b => {
+                        if let Expr::Var(n) = a.as_ref() {
+                            rhs.eval_f64(&known, 0.0).ok().map(|v| (n, v.sqrt()))
+                        } else {
+                            None
+                        }
+                    }
+                    Expr::Mul(a, b) => {
+                        if let Expr::Var(n) = a.as_ref() {
+                            rhs.eval_f64(&known, 0.0)
+                                .ok()
+                                .zip(b.eval_f64(&known, 0.0).ok())
+                                .map(|(r, d)| (n, r / d))
+                        } else {
+                            None
+                        }
+                    }
                     _ => None,
                 };
-                if let Some((n, v)) = candidate { if v.is_finite() { known.entry(n.clone()).or_insert(v); } }
+                if let Some((n, v)) = candidate {
+                    if v.is_finite() {
+                        known.entry(n.clone()).or_insert(v);
+                    }
+                }
             }
         }
-        if before == known.len() { break; }
+        if before == known.len() {
+            break;
+        }
     }
     let param_vals = &known;
     match &sys.body {
@@ -393,16 +456,34 @@ fn simulate_stamped(
                 } = &c.formula
                 {
                     all_eqs.push((lhs.clone(), rhs.clone()));
-                    if (c.comment == "Electron SG continuity" || c.comment == "Hole SG continuity") && vars.iter().filter(|v| v.name.starts_with("phin_") || v.name.starts_with("phip_")).all(|v| param_vals.contains_key(&v.name)) { continue; }
-                    if lhs.eval_f64(param_vals, 0.0).is_ok() && rhs.eval_f64(param_vals, 0.0).is_ok() { continue; }
+                    if (c.comment == "Electron SG continuity" || c.comment == "Hole SG continuity")
+                        && vars
+                            .iter()
+                            .filter(|v| v.name.starts_with("phin_") || v.name.starts_with("phip_"))
+                            .all(|v| param_vals.contains_key(&v.name))
+                    {
+                        continue;
+                    }
+                    if lhs.eval_f64(param_vals, 0.0).is_ok()
+                        && rhs.eval_f64(param_vals, 0.0).is_ok()
+                    {
+                        continue;
+                    }
                     if let Expr::Mul(a, b) = lhs {
-                        if a == b { if let Expr::Var(name) = a.as_ref() {
-                            explicit_defs.push((name.clone(), Expr::sqrt(rhs.clone()))); continue;
-                        } }
+                        if a == b {
+                            if let Expr::Var(name) = a.as_ref() {
+                                explicit_defs.push((name.clone(), Expr::sqrt(rhs.clone())));
+                                continue;
+                            }
+                        }
                     }
                     if let Expr::Var(name) = lhs {
-                        if name.starts_with("ic_") || name.starts_with("ib_") || (name.starts_with("i_") && c.comment.contains("current")) {
-                            explicit_defs.push((name.clone(), rhs.clone())); continue;
+                        if name.starts_with("ic_")
+                            || name.starts_with("ib_")
+                            || (name.starts_with("i_") && c.comment.contains("current"))
+                        {
+                            explicit_defs.push((name.clone(), rhs.clone()));
+                            continue;
                         }
                     }
                     if let (Expr::Exp(y), Expr::Add(_, ez)) = (lhs, rhs) {
@@ -415,7 +496,12 @@ fn simulate_stamped(
                     }
                     if let (Expr::Var(ename), Expr::Exp(delta_box)) = (lhs, rhs) {
                         if let Some(rest) = ename.strip_prefix("E_pn_") {
-                            sg_edges.push((ename.clone(),format!("Bp_pn_{rest}"),(**delta_box).clone())); continue;
+                            sg_edges.push((
+                                ename.clone(),
+                                format!("Bp_pn_{rest}"),
+                                (**delta_box).clone(),
+                            ));
+                            continue;
                         }
                         if let Some(rest) = ename.strip_prefix("E_sg_") {
                             sg_edges.push((
@@ -436,7 +522,10 @@ fn simulate_stamped(
                     }
                     if let Expr::Mul(bp_box, _) = lhs {
                         if let Expr::Var(bp_name) = bp_box.as_ref() {
-                            if bp_name.starts_with("Bp_sg_") || bp_name.starts_with("Bp_gaa_") || bp_name.starts_with("Bp_pn_") {
+                            if bp_name.starts_with("Bp_sg_")
+                                || bp_name.starts_with("Bp_gaa_")
+                                || bp_name.starts_with("Bp_pn_")
+                            {
                                 continue;
                             }
                         }
@@ -449,7 +538,9 @@ fn simulate_stamped(
                         continue;
                     }
                     if let Expr::Var(vname) = lhs {
-                        if vname.starts_with("J_a_per_cm2_") || vname.starts_with("E_junc_v_per_um_") || vname.starts_with("id_leak_ua_")
+                        if vname.starts_with("J_a_per_cm2_")
+                            || vname.starts_with("E_junc_v_per_um_")
+                            || vname.starts_with("id_leak_ua_")
                             || vname.starts_with("I_stack_ua_")
                             || vname.starts_with("psi_mid_")
                         {
@@ -464,7 +555,12 @@ fn simulate_stamped(
             }
 
             let is_eliminated = |name: &str| {
-                explicit_defs.iter().any(|(n, _)| n == name) || name.starts_with("E_pn_") || name.starts_with("Bp_pn_") || name.starts_with("E_peak_v_per_um_") || name.starts_with("y_sp_") || name.starts_with("E_sg_")
+                explicit_defs.iter().any(|(n, _)| n == name)
+                    || name.starts_with("E_pn_")
+                    || name.starts_with("Bp_pn_")
+                    || name.starts_with("E_peak_v_per_um_")
+                    || name.starts_with("y_sp_")
+                    || name.starts_with("E_sg_")
                     || name.starts_with("Bp_sg_")
                     || name.starts_with("E_gaa_")
                     || name.starts_with("Bp_gaa_")
@@ -494,7 +590,11 @@ fn simulate_stamped(
                         env.insert(vn.clone(), guess_map.get(vn).copied().unwrap_or(0.2));
                     }
                     let refresh_sg = |m: &mut BTreeMap<String, f64>| -> Result<(), String> {
-                        for (n, rhs) in &explicit_defs { if let Ok(v) = rhs.eval_f64(m, 0.0) { m.insert(n.clone(), v); } }
+                        for (n, rhs) in &explicit_defs {
+                            if let Ok(v) = rhs.eval_f64(m, 0.0) {
+                                m.insert(n.clone(), v);
+                            }
+                        }
                         for (ename, bpname, delta_expr) in &sg_edges {
                             let d = delta_expr.eval_f64(m, 0.0)?;
                             m.insert(ename.clone(), d.exp());
@@ -560,11 +660,19 @@ fn simulate_stamped(
                                     let mut peak = f64::NEG_INFINITY;
                                     let mut name = None;
                                     for f in choices {
-                                        if let Formula::Cmp {lhs:Expr::Var(n),rhs,..} = f {
-                                            peak = peak.max(rhs.eval_f64(m,0.0)?); name = Some(n);
+                                        if let Formula::Cmp {
+                                            lhs: Expr::Var(n),
+                                            rhs,
+                                            ..
+                                        } = f
+                                        {
+                                            peak = peak.max(rhs.eval_f64(m, 0.0)?);
+                                            name = Some(n);
                                         }
                                     }
-                                    if let Some(name) = name { m.insert(name.clone(),peak); }
+                                    if let Some(name) = name {
+                                        m.insert(name.clone(), peak);
+                                    }
                                 }
                             }
                         }
@@ -576,14 +684,23 @@ fn simulate_stamped(
                     };
                     let mut scale_env = env.clone();
                     refresh_sg(&mut scale_env).ok()?;
-                    let scales: Vec<_> = primary_eqs.iter().map(|(l,r)| equation_scale(l,r,&scale_env,0.0).map(|v| v.clamp(1e-7,1.0))).collect::<Result<_,_>>().ok()?;
+                    let scales: Vec<_> = primary_eqs
+                        .iter()
+                        .map(|(l, r)| {
+                            equation_scale(l, r, &scale_env, 0.0).map(|v| v.clamp(1e-7, 1.0))
+                        })
+                        .collect::<Result<_, _>>()
+                        .ok()?;
                     let eval_res = |m: &BTreeMap<String, f64>| -> Result<Vec<f64>, String> {
                         let mut m_full = m.clone();
                         refresh_sg(&mut m_full)?;
                         let mut r = Vec::with_capacity(n);
                         for ((lhs, rhs), scale) in primary_eqs.iter().zip(&scales) {
-                            let residual = (lhs.eval_f64(&m_full, 0.0)? - rhs.eval_f64(&m_full, 0.0)?) / scale;
-                            if !residual.is_finite() { return Err("non-finite projected Newton residual".into()); }
+                            let residual =
+                                (lhs.eval_f64(&m_full, 0.0)? - rhs.eval_f64(&m_full, 0.0)?) / scale;
+                            if !residual.is_finite() {
+                                return Err("non-finite projected Newton residual".into());
+                            }
                             r.push(residual);
                         }
                         Ok(r)
@@ -637,7 +754,9 @@ fn simulate_stamped(
                             for (row, values) in aug.iter_mut().enumerate().take(n) {
                                 if row != col {
                                     let f = values[col];
-                                    for (value, pivot_value) in values[col..=n].iter_mut().zip(&pivot) {
+                                    for (value, pivot_value) in
+                                        values[col..=n].iter_mut().zip(&pivot)
+                                    {
                                         *value -= f * pivot_value;
                                     }
                                 }
@@ -716,7 +835,8 @@ fn simulate_stamped(
                     {
                         0.001
                     } else {
-                        v.bounds.map_or(0.0, |(lo, hi)| (0.5 * (lo + hi)).clamp(-2.0, 2.0))
+                        v.bounds
+                            .map_or(0.0, |(lo, hi)| (0.5 * (lo + hi)).clamp(-2.0, 2.0))
                     }
                 });
             }
@@ -728,7 +848,10 @@ fn simulate_stamped(
             for (lhs, rhs) in &all_eqs {
                 let lv = lhs.eval_f64(&sol, 0.0).ok()?;
                 let rv = rhs.eval_f64(&sol, 0.0).ok()?;
-                if !lv.is_finite() || !rv.is_finite() || equation_residual(lhs, rhs, &sol, 0.0).ok()?.abs() > 1.0e-7 {
+                if !lv.is_finite()
+                    || !rv.is_finite()
+                    || equation_residual(lhs, rhs, &sol, 0.0).ok()?.abs() > 1.0e-7
+                {
                     eprintln!(
                         "  [diag] {}: equality residual too large: |{lv} - {rv}|",
                         sys.title
@@ -738,10 +861,17 @@ fn simulate_stamped(
             }
             for v in vars {
                 let val = sol[&v.name];
-                if !val.is_finite() || v.bounds.is_some_and(|(lo, hi)| val < lo - 1e-7 || val > hi + 1e-7) {
+                if !val.is_finite()
+                    || v.bounds
+                        .is_some_and(|(lo, hi)| val < lo - 1e-7 || val > hi + 1e-7)
+                {
                     eprintln!(
                         "  [diag] {}: var `{}` = {} out of bounds [{}, {}]",
-                        sys.title, v.name, val, v.bounds.map_or(f64::NEG_INFINITY, |b| b.0), v.bounds.map_or(f64::INFINITY, |b| b.1)
+                        sys.title,
+                        v.name,
+                        val,
+                        v.bounds.map_or(f64::NEG_INFINITY, |b| b.0),
+                        v.bounds.map_or(f64::INFINITY, |b| b.1)
                     );
                     return None;
                 }
@@ -765,7 +895,11 @@ fn simulate_stamped(
         } => {
             let mut full_params = param_vals.clone();
             if !static_vars.is_empty() {
-                let sv_names: Vec<String> = static_vars.iter().filter(|v| !param_vals.contains_key(&v.name)).map(|v| v.name.clone()).collect();
+                let sv_names: Vec<String> = static_vars
+                    .iter()
+                    .filter(|v| !param_vals.contains_key(&v.name))
+                    .map(|v| v.name.clone())
+                    .collect();
                 let mut s_eqs = Vec::new();
                 for c in static_constraints {
                     if let Formula::Cmp {
@@ -774,7 +908,11 @@ fn simulate_stamped(
                         rhs,
                     } = &c.formula
                     {
-                        if lhs.eval_f64(param_vals, 0.0).is_err() || rhs.eval_f64(param_vals, 0.0).is_err() { s_eqs.push((lhs.clone(), rhs.clone())); }
+                        if lhs.eval_f64(param_vals, 0.0).is_err()
+                            || rhs.eval_f64(param_vals, 0.0).is_err()
+                        {
+                            s_eqs.push((lhs.clone(), rhs.clone()));
+                        }
                     }
                 }
                 let mut s_guess = BTreeMap::new();
@@ -797,8 +935,7 @@ fn simulate_stamped(
                         },
                     );
                 }
-                let s_sol =
-                    solve_equality_system(&sv_names, &s_guess, param_vals, &s_eqs, 0.0)?;
+                let s_sol = solve_equality_system(&sv_names, &s_guess, param_vals, &s_eqs, 0.0)?;
                 for (k, v) in s_sol {
                     full_params.insert(k, v);
                 }
@@ -814,26 +951,43 @@ fn simulate_stamped(
                 cur_state.insert(st.name.clone(), x0);
             }
 
-            let validate = |env: &BTreeMap<String,f64>, t: f64| -> Option<()> {
-                if env.values().any(|v| v.is_nan() || !v.is_finite()) { return None; }
+            let validate = |env: &BTreeMap<String, f64>, t: f64| -> Option<()> {
+                if env.values().any(|v| v.is_nan() || !v.is_finite()) {
+                    return None;
+                }
                 for v in static_vars {
                     let x = env[&v.name];
-                    if v.bounds.is_some_and(|(lo,hi)| x < lo-1e-7 || x > hi+1e-7) { return None; }
+                    if v.bounds
+                        .is_some_and(|(lo, hi)| x < lo - 1e-7 || x > hi + 1e-7)
+                    {
+                        return None;
+                    }
                 }
                 for c in static_constraints {
                     let valid = match &c.formula {
-                        Formula::Cmp {op:CmpOp::Eq,lhs,rhs} => equation_residual(lhs,rhs,env,t).ok()?.abs() <= 1e-7,
-                        f => f.eval_f64(env,t).ok()?,
+                        Formula::Cmp {
+                            op: CmpOp::Eq,
+                            lhs,
+                            rhs,
+                        } => equation_residual(lhs, rhs, env, t).ok()?.abs() <= 1e-7,
+                        f => f.eval_f64(env, t).ok()?,
                     };
-                    if !valid { return None; }
+                    if !valid {
+                        return None;
+                    }
                 }
                 for st in states {
                     let x = env[&st.name];
-                    if x < st.lo-1e-7 || x > st.hi+1e-7 || !st.rhs.eval_f64(env,t).ok()?.is_finite() { return None; }
+                    if x < st.lo - 1e-7
+                        || x > st.hi + 1e-7
+                        || !st.rhs.eval_f64(env, t).ok()?.is_finite()
+                    {
+                        return None;
+                    }
                 }
                 Some(())
             };
-            validate(&cur_state,0.0)?;
+            validate(&cur_state, 0.0)?;
             let mut hit_unsafe = sys.unsafe_formula.eval_f64(&cur_state, 0.0).ok()?;
             for k in 1..=*steps {
                 let tk = (k as f64) * (*dt);
@@ -864,9 +1018,11 @@ fn simulate_stamped(
                         return None;
                     }
                 }
-                validate(&sol_k,tk)?;
-                for (lhs,rhs) in &step_eqs {
-                    if equation_residual(lhs,rhs,&sol_k,tk).ok()?.abs() > 1e-7 { return None; }
+                validate(&sol_k, tk)?;
+                for (lhs, rhs) in &step_eqs {
+                    if equation_residual(lhs, rhs, &sol_k, tk).ok()?.abs() > 1e-7 {
+                        return None;
+                    }
                 }
                 if sys.unsafe_formula.eval_f64(&sol_k, tk).ok()? {
                     hit_unsafe = true;
@@ -937,7 +1093,9 @@ fn test_physical_nonvacuity_and_sat_witnesses_across_all_19_benchmarks() {
                         println!("  [OK UNSAT non-vacuous] {fname}");
                     }
                     Some((sol, true)) => {
-                        failures.push(format!("{fname}: expected UNSAT, but nominal solution hit .unsafe ({sol:?})"));
+                        failures.push(format!(
+                            "{fname}: expected UNSAT, but nominal solution hit .unsafe ({sol:?})"
+                        ));
                     }
                     None => {
                         failures.push(format!("{fname}: failed non-vacuity convergence"));
@@ -989,7 +1147,9 @@ fn test_physical_nonvacuity_and_sat_witnesses_across_all_19_benchmarks() {
                         println!("  [OK SAT witness]       {fname}");
                     }
                     Some((sol, false)) => {
-                        failures.push(format!("{fname}: expected SAT witness, but .unsafe was false ({sol:?})"));
+                        failures.push(format!(
+                            "{fname}: expected SAT witness, but .unsafe was false ({sol:?})"
+                        ));
                     }
                     None => {
                         failures.push(format!("{fname}: failed SAT witness convergence"));
@@ -998,7 +1158,11 @@ fn test_physical_nonvacuity_and_sat_witnesses_across_all_19_benchmarks() {
             }
         }
     }
-    assert!(failures.is_empty(), "Benchmark physical checks failed:\n{}", failures.join("\n"));
+    assert!(
+        failures.is_empty(),
+        "Benchmark physical checks failed:\n{}",
+        failures.join("\n")
+    );
 }
 
 #[test]
@@ -1047,11 +1211,11 @@ fn test_corner_soundness_and_scientific_literal_precision() {
         seed.insert("v_vdd".to_string(), vdd);
         seed.insert("v_ref".to_string(), 1.20);
         seed.insert("v_e0".into(), 0.55);
-        seed.insert("v_vc1".into(), vdd-0.5);
+        seed.insert("v_vc1".into(), vdd - 0.5);
         seed.insert("v_ve2".to_string(), 0.60);
         seed.insert("i_Vsup".to_string(), -0.0006);
-        let (sol, is_unsafe) =
-            simulate_stamped(&sys_04b, &p, &seed).expect("04b extremal corner must have DC equilibrium");
+        let (sol, is_unsafe) = simulate_stamped(&sys_04b, &p, &seed)
+            .expect("04b extremal corner must have DC equilibrium");
         assert!(
             !is_unsafe && sol["v_ref"] > 0.45,
             "04b corner ({vdd}, {temp_k}, {deg_ge}) unsafe or collapsed: v_ref={}",
@@ -1088,16 +1252,28 @@ fn test_corner_soundness_and_scientific_literal_precision() {
 
 #[test]
 fn rejects_malformed_transient_and_source_inputs() {
-    for config in ["dt=0 steps=1", "dt=-1n steps=1", "dt=1n steps=0",
-        "dt=1n steps=1.5", "dt=1n steps=1 method=typo", "dt=1n steps=1 extra=1",
-        "dt=1n dt=2n steps=1"] {
-        assert!(parser::parse_deck(&format!(".mode tran {config}\n.unsafe v(a)>1\n")).is_err(), "{config}");
+    for config in [
+        "dt=0 steps=1",
+        "dt=-1n steps=1",
+        "dt=1n steps=0",
+        "dt=1n steps=1.5",
+        "dt=1n steps=1 method=typo",
+        "dt=1n steps=1 extra=1",
+        "dt=1n dt=2n steps=1",
+    ] {
+        assert!(
+            parser::parse_deck(&format!(".mode tran {config}\n.unsafe v(a)>1\n")).is_err(),
+            "{config}"
+        );
     }
     for literal in ["NaN", "inf", "-inf", "1e999", "1e308t"] {
         assert!(parser::parse_spice_number(literal).is_err(), "{literal}");
     }
     for source in ["V1 a 0 DC 1 extra", "V1 a 0 1 extra", "L1 a 0 1n typo=1"] {
-        assert!(parser::parse_deck(&format!("{source}\n.unsafe v(a)>1\n")).is_err(), "{source}");
+        assert!(
+            parser::parse_deck(&format!("{source}\n.unsafe v(a)>1\n")).is_err(),
+            "{source}"
+        );
     }
     let duplicate = ".mode tran dt=1n steps=1\nV1 a 0 DC 1\nV2 a 0 DC 2\nR1 a b 1k\nC1 b 0 1p\n.unsafe v(b)>1\n";
     assert!(compile_str(duplicate, Dialect::Smt2Exp, None, None).is_err());
@@ -1117,16 +1293,26 @@ fn discrete_safety_includes_initial_state_and_logic_matches_dialect() {
 #[test]
 fn certified_transcendental_intervals_cover_reference_values() {
     use spice2smt::paving::Iv;
-    for x in [-1025.0, -745.0, -700.0, -30.0, -1.0, -0.5, 0.0, 0.5, 1.0, 30.0, 700.0, 710.0] {
+    for x in [
+        -1025.0, -745.0, -700.0, -30.0, -1.0, -0.5, 0.0, 0.5, 1.0, 30.0, 700.0, 710.0,
+    ] {
         let enclosure = Iv::exact(x).exp();
         // Library values are a numerical cross-check, not the enclosure's justification.
-        assert!(enclosure.lo <= x.exp() && x.exp() <= enclosure.hi, "exp({x}): {enclosure:?}");
+        assert!(
+            enclosure.lo <= x.exp() && x.exp() <= enclosure.hi,
+            "exp({x}): {enclosure:?}"
+        );
         let softplus = Iv::exact(x).ln1p_exp();
         let reference = x.max(0.0) + (-x.abs()).exp().ln_1p();
-        assert!(softplus.lo <= reference && reference <= softplus.hi, "softplus({x}): {softplus:?}");
+        assert!(
+            softplus.lo <= reference && reference <= softplus.hi,
+            "softplus({x}): {softplus:?}"
+        );
     }
     for index in ["-1", "0.5", "1e999"] {
-        let json = format!("{{\"type\":\"leaf\",\"reason\":\"constraint_violated\",\"constraint_index\":{index}}}");
+        let json = format!(
+            "{{\"type\":\"leaf\",\"reason\":\"constraint_violated\",\"constraint_index\":{index}}}"
+        );
         assert!(paving::parse_paving_json(&json).is_err());
     }
 }
@@ -1141,7 +1327,10 @@ fn rejects_unresolved_references_and_constant_cycles() {
         "R1 a 0 1k\n.bound v(typo) [0,1]\n.unsafe v(a)>1\n",
         "R1 a 0 1k\nR1 b 0 1k\n.unsafe v(a)>1\n",
     ] {
-        assert!(compile_str(source, Dialect::Smt2Exp, None, None).is_err(), "{source}");
+        assert!(
+            compile_str(source, Dialect::Smt2Exp, None, None).is_err(),
+            "{source}"
+        );
     }
     let forward = ".const a = b\n.const b = 1000\nR1 a 0 {a}\n.unsafe v(a)>1\n";
     assert!(compile_str(forward, Dialect::Smt2Exp, None, None).is_ok());
@@ -1150,8 +1339,14 @@ fn rejects_unresolved_references_and_constant_cycles() {
 #[test]
 fn shortest_decimal_rationals_preserve_distinct_values() {
     use spice2smt::numeral::exact_f64_to_rat;
-    assert_eq!(exact_f64_to_rat(0.1).unwrap(), (false, "1".into(), "10".into()));
-    assert_ne!(spice2smt::emit_smt2::format_smt2_real(1.0000000000004), spice2smt::emit_smt2::format_smt2_real(1.0000000000002));
+    assert_eq!(
+        exact_f64_to_rat(0.1).unwrap(),
+        (false, "1".into(), "10".into())
+    );
+    assert_ne!(
+        spice2smt::emit_smt2::format_smt2_real(1.0000000000004),
+        spice2smt::emit_smt2::format_smt2_real(1.0000000000002)
+    );
     for value in [f64::INFINITY, f64::NEG_INFINITY, f64::NAN] {
         assert!(exact_f64_to_rat(value).is_err());
     }
@@ -1165,61 +1360,121 @@ fn committed_artifacts_are_fresh() {
     let root = repo_root();
     let bundle = fs::read_to_string(root.join("lean/SpiceSmtBench/TargetsGenerated.lean")).unwrap();
     let mut generated_defs = String::new();
-    let mut paths: Vec<_> = fs::read_dir(root.join("benchmarks/sp")).unwrap()
-        .map(|e| e.unwrap().path()).filter(|p| p.extension().is_some_and(|e| e == "sp")).collect();
+    let mut paths: Vec<_> = fs::read_dir(root.join("benchmarks/sp"))
+        .unwrap()
+        .map(|e| e.unwrap().path())
+        .filter(|p| p.extension().is_some_and(|e| e == "sp"))
+        .collect();
     paths.sort();
     for path in paths {
         let source = fs::read_to_string(&path).unwrap();
         let stem = path.file_stem().unwrap().to_str().unwrap();
-        for (dialect, directory) in [(Dialect::Smt2Exp, "smt2-exp"), (Dialect::DrealOde, "dreal-ode")] {
+        for (dialect, directory) in [
+            (Dialect::Smt2Exp, "smt2-exp"),
+            (Dialect::DrealOde, "dreal-ode"),
+        ] {
             let generated = compile_str(&source, dialect, None, None).unwrap();
-            let committed = fs::read_to_string(root.join(format!("benchmarks/smt2/{directory}/{stem}.smt2"))).unwrap();
+            let committed =
+                fs::read_to_string(root.join(format!("benchmarks/smt2/{directory}/{stem}.smt2")))
+                    .unwrap();
             assert_eq!(generated, committed, "stale artifact: {directory}/{stem}");
         }
         let sys = stamp::stamp_deck(&parser::parse_deck(&source).unwrap()).unwrap();
-        generated_defs.push_str(&spice2smt::emit_lean::emit_lean_def(&sys, &format!("Bench_{stem}"), false));
+        generated_defs.push_str(&spice2smt::emit_lean::emit_lean_def(
+            &sys,
+            &format!("Bench_{stem}"),
+            false,
+        ));
         generated_defs.push('\n');
     }
-    let (_, body) = bundle.split_once("namespace SpiceSmtBench.Targets\n\n").unwrap();
-    assert_eq!(body, format!("{generated_defs}end SpiceSmtBench.Targets\n"), "stale Lean definitions");
+    let (_, body) = bundle
+        .split_once("namespace SpiceSmtBench.Targets\n\n")
+        .unwrap();
+    assert_eq!(
+        body,
+        format!("{generated_defs}end SpiceSmtBench.Targets\n"),
+        "stale Lean definitions"
+    );
     let source = fs::read_to_string(root.join("benchmarks/sp/01_diode_clipper_pvt.sp")).unwrap();
     let sys = stamp::stamp_deck(&parser::parse_deck(&source).unwrap()).unwrap();
-    let certificate = paving::generate_paving(&sys, &[("v_out".into(), 0.84), ("i_D1".into(), 0.005)]).unwrap();
-    assert_eq!(format!("{}\n", certificate.to_json()), fs::read_to_string(root.join("examples/diode_clipper_paving.json")).unwrap());
+    let certificate =
+        paving::generate_paving(&sys, &[("v_out".into(), 0.84), ("i_D1".into(), 0.005)]).unwrap();
+    assert_eq!(
+        format!("{}\n", certificate.to_json()),
+        fs::read_to_string(root.join("examples/diode_clipper_paving.json")).unwrap()
+    );
 }
 
 #[test]
 fn series_esr_remains_active_without_esl() {
     let source = ".mode tran dt=1n steps=1\nV1 a 0 DC 1\nC_MLCC1 a 0 C0=1u Cmin=0 Vsat=1 ESR=2 ESL=0\n.unsafe vc_C_MLCC1>2\n";
     let sys = stamp::stamp_deck(&parser::parse_deck(source).unwrap()).unwrap();
-    let StampedBody::Ode { states, .. } = sys.body else { panic!("expected ODE") };
-    let state = states.iter().find(|s| s.name == "vc_C_MLCC1").expect("series capacitor voltage state");
+    let StampedBody::Ode { states, .. } = sys.body else {
+        panic!("expected ODE")
+    };
+    let state = states
+        .iter()
+        .find(|s| s.name == "vc_C_MLCC1")
+        .expect("series capacitor voltage state");
     let env = BTreeMap::from([("vc_C_MLCC1".into(), 0.0)]);
     assert!((state.rhs.eval_f64(&env, 0.0).unwrap() - 500_000.0).abs() < 1e-8);
 }
 
 #[test]
 fn scr_guarded_full_box_and_unguarded_latch() {
-    let source = fs::read_to_string(repo_root().join("benchmarks/sp/05_cmos_scr_latchup_holding.sp")).unwrap();
+    let source =
+        fs::read_to_string(repo_root().join("benchmarks/sp/05_cmos_scr_latchup_holding.sp"))
+            .unwrap();
     let sys = stamp::stamp_deck(&parser::parse_deck(&source).unwrap()).unwrap();
-    let StampedBody::Algebraic { vars, .. } = &sys.body else { panic!("expected SCR DC stamp") };
-    assert!(vars.iter().filter(|v| v.name == "i_Vsup" || v.name.starts_with("ic_") || v.name.starts_with("ib_")).all(|v| v.bounds.is_none()), "SCR proof must not assume current clamps");
+    let StampedBody::Algebraic { vars, .. } = &sys.body else {
+        panic!("expected SCR DC stamp")
+    };
+    assert!(
+        vars.iter()
+            .filter(|v| v.name == "i_Vsup"
+                || v.name.starts_with("ic_")
+                || v.name.starts_with("ib_"))
+            .all(|v| v.bounds.is_none()),
+        "SCR proof must not assume current clamps"
+    );
     let splits = ["v_nwell", "v_psub", "v_ep", "v_en", "temp_k"].map(String::from);
-    let boxes = paving::prove_unsat(&sys, &splits, 8191).expect("global SCR protection proof without current bounds");
+    let boxes = paving::prove_unsat(&sys, &splits, 8191)
+        .expect("global SCR protection proof without current bounds");
     println!("SCR global proof: {boxes} boxes");
-    let source = source.replace(".expected unsat", ".expected sat").replace("[0.70, 0.88]", "[1.2, 1.2]")
-        .replace("[6.0, 14.0]", "[150, 150]").replace("[5.0, 12.0]", "[120, 120]")
-        .replace("R_ep sup ep 20", "R_ep sup ep 1").replace("R_en en 0 20", "R_en en 0 1");
+    let source = source
+        .replace(".expected unsat", ".expected sat")
+        .replace("[0.70, 0.88]", "[1.2, 1.2]")
+        .replace("[6.0, 14.0]", "[150, 150]")
+        .replace("[5.0, 12.0]", "[120, 120]")
+        .replace("R_ep sup ep 20", "R_ep sup ep 1")
+        .replace("R_en en 0 20", "R_en en 0 1");
     let sys = stamp::stamp_deck(&parser::parse_deck(&source).unwrap()).unwrap();
-    let params = BTreeMap::from([("vsupply".into(),1.2),("r_well".into(),150.0),("r_sub".into(),120.0),("temp_k".into(),300.0)]);
-    let seed = BTreeMap::from([("v_sup".into(),1.2),("v_nwell".into(),0.4),("v_psub".into(),0.8),("v_ep".into(),1.15),("v_en".into(),0.05)]);
-    let (sol, unsafe_root) = simulate_stamped(&sys, &params, &seed).expect("unguarded latched root");
-    assert!(unsafe_root && -sol["i_Vsup"] > 0.005, "SCR latch witness: {sol:?}");
+    let params = BTreeMap::from([
+        ("vsupply".into(), 1.2),
+        ("r_well".into(), 150.0),
+        ("r_sub".into(), 120.0),
+        ("temp_k".into(), 300.0),
+    ]);
+    let seed = BTreeMap::from([
+        ("v_sup".into(), 1.2),
+        ("v_nwell".into(), 0.4),
+        ("v_psub".into(), 0.8),
+        ("v_ep".into(), 1.15),
+        ("v_en".into(), 0.05),
+    ]);
+    let (sol, unsafe_root) =
+        simulate_stamped(&sys, &params, &seed).expect("unguarded latched root");
+    assert!(
+        unsafe_root && -sol["i_Vsup"] > 0.005,
+        "SCR latch witness: {sol:?}"
+    );
 }
 
 #[test]
 fn pcb_full_box_interval_certificate() {
-    let source = fs::read_to_string(repo_root().join("benchmarks/sp/09a_pcb_microstrip_dfm_unsat.sp")).unwrap();
+    let source =
+        fs::read_to_string(repo_root().join("benchmarks/sp/09a_pcb_microstrip_dfm_unsat.sp"))
+            .unwrap();
     let sys = stamp::stamp_deck(&parser::parse_deck(&source).unwrap()).unwrap();
     let splits: Vec<_> = sys.params.iter().map(|p| p.name.clone()).collect();
     let boxes = paving::prove_unsat(&sys, &splits, 4095).expect("global PCB impedance enclosure");
@@ -1231,65 +1486,149 @@ fn bandgap_twins_have_nominal_and_startup_witnesses() {
     let root = repo_root().join("benchmarks/sp");
     let a = fs::read_to_string(root.join("04a_ihp_sige_bandgap_trojan_sat.sp")).unwrap();
     let b = fs::read_to_string(root.join("04b_ihp_sige_bandgap_guarded_unsat.sp")).unwrap();
-    let core = |s: &str| s.lines().filter(|l| l.starts_with("Mp") || l.starts_with('Q') || l.starts_with('R')).collect::<Vec<_>>().join("\n");
+    let core = |s: &str| {
+        s.lines()
+            .filter(|l| l.starts_with("Mp") || l.starts_with('Q') || l.starts_with('R'))
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
     assert_eq!(core(&a), core(&b));
-    let params = BTreeMap::from([("vdd".into(),3.0),("temp_k".into(),300.0),("deg_ge".into(),0.085)]);
-    let high = BTreeMap::from([("v_vdd".into(),3.0),("v_ref".into(),1.2),("v_e0".into(),0.55),("v_ve2".into(),0.60),("v_vc1".into(),2.4)]);
+    let params = BTreeMap::from([
+        ("vdd".into(), 3.0),
+        ("temp_k".into(), 300.0),
+        ("deg_ge".into(), 0.085),
+    ]);
+    let high = BTreeMap::from([
+        ("v_vdd".into(), 3.0),
+        ("v_ref".into(), 1.2),
+        ("v_e0".into(), 0.55),
+        ("v_ve2".into(), 0.60),
+        ("v_vc1".into(), 2.4),
+    ]);
     for source in [&a, &b] {
         let sys = stamp::stamp_deck(&parser::parse_deck(source).unwrap()).unwrap();
-        let (sol, unsafe_root) = simulate_stamped(&sys, &params, &high).expect("nominal bandgap equilibrium");
-        assert!(!unsafe_root && (1.18..=1.22).contains(&sol["v_ref"]), "nominal reference: {}", sol["v_ref"]);
+        let (sol, unsafe_root) =
+            simulate_stamped(&sys, &params, &high).expect("nominal bandgap equilibrium");
+        assert!(
+            !unsafe_root && (1.18..=1.22).contains(&sol["v_ref"]),
+            "nominal reference: {}",
+            sol["v_ref"]
+        );
     }
-    let low = BTreeMap::from([("v_vdd".into(),3.0),("v_ref".into(),0.001),("v_e0".into(),0.0),("v_ve2".into(),0.0),("v_vc1".into(),2.999)]);
+    let low = BTreeMap::from([
+        ("v_vdd".into(), 3.0),
+        ("v_ref".into(), 0.001),
+        ("v_e0".into(), 0.0),
+        ("v_ve2".into(), 0.0),
+        ("v_vc1".into(), 2.999),
+    ]);
     let sys = stamp::stamp_deck(&parser::parse_deck(&a).unwrap()).unwrap();
-    assert!(simulate_stamped(&sys, &params, &low).expect("low-current equilibrium").1);
+    assert!(
+        simulate_stamped(&sys, &params, &low)
+            .expect("low-current equilibrium")
+            .1
+    );
 }
 
 #[test]
 fn sram_zero_defect_and_pdn_without_mlcc_counterfactuals() {
-    let source = fs::read_to_string(repo_root().join("benchmarks/sp/03b_asap7_sram_6t_fin_collapse_sat.sp")).unwrap();
+    let source =
+        fs::read_to_string(repo_root().join("benchmarks/sp/03b_asap7_sram_6t_fin_collapse_sat.sp"))
+            .unwrap();
     let sys = stamp::stamp_deck(&parser::parse_deck(&source).unwrap()).unwrap();
-    let params = BTreeMap::from([("dtfin_nm".into(),0.0),("dt_fin_pdb".into(),0.0),("dphim".into(),0.0)]);
-    let (sol, unsafe_root) = simulate_stamped(&sys, &params, &BTreeMap::new()).expect("zero-defect SRAM");
-    assert!(!unsafe_root && sol["v_q"]-sol["v_qb"] > 0.35);
-    let source = fs::read_to_string(repo_root().join("benchmarks/sp/11_pcb_pdn_mlcc_derating_droop_ode.sp")).unwrap();
-    let source = source.lines().filter(|l| !l.starts_with("C_MLCC1") && !l.contains("vc_C_MLCC1") && !l.contains("i_C_MLCC1")).collect::<Vec<_>>().join("\n");
+    let params = BTreeMap::from([
+        ("dtfin_nm".into(), 0.0),
+        ("dt_fin_pdb".into(), 0.0),
+        ("dphim".into(), 0.0),
+    ]);
+    let (sol, unsafe_root) =
+        simulate_stamped(&sys, &params, &BTreeMap::new()).expect("zero-defect SRAM");
+    assert!(!unsafe_root && sol["v_q"] - sol["v_qb"] > 0.35);
+    let source =
+        fs::read_to_string(repo_root().join("benchmarks/sp/11_pcb_pdn_mlcc_derating_droop_ode.sp"))
+            .unwrap();
+    let source = source
+        .lines()
+        .filter(|l| {
+            !l.starts_with("C_MLCC1") && !l.contains("vc_C_MLCC1") && !l.contains("i_C_MLCC1")
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
     let sys = stamp::stamp_deck(&parser::parse_deck(&source).unwrap()).unwrap();
-    let params = BTreeMap::from([("r_void".into(),0.028),("v_sat".into(),0.55),("di_step".into(),1.10)]);
-    assert!(simulate_stamped(&sys, &params, &BTreeMap::new()).expect("PDN counterfactual trajectory").1, "MLCC removal must breach 0.80 V");
+    let params = BTreeMap::from([
+        ("r_void".into(), 0.028),
+        ("v_sat".into(), 0.55),
+        ("di_step".into(), 1.10),
+    ]);
+    assert!(
+        simulate_stamped(&sys, &params, &BTreeMap::new())
+            .expect("PDN counterfactual trajectory")
+            .1,
+        "MLCC removal must breach 0.80 V"
+    );
 }
 
 #[test]
 fn confinement_is_load_bearing_for_leakage() {
-    let source = fs::read_to_string(repo_root().join("benchmarks/sp/13_asap7_finfet_2d_poisson_qconfinement.sp")).unwrap();
+    let source = fs::read_to_string(
+        repo_root().join("benchmarks/sp/13_asap7_finfet_2d_poisson_qconfinement.sp"),
+    )
+    .unwrap();
     let mut sys = stamp::stamp_deck(&parser::parse_deck(&source).unwrap()).unwrap();
     fn remove_confinement(e: &mut Expr) {
         match e {
             Expr::Num(v) if *v == 0.8357 => *v = 0.0,
             Expr::Neg(a) | Expr::Exp(a) | Expr::Sqrt(a) | Expr::Ln1pExp(a) => remove_confinement(a),
-            Expr::Add(a,b) | Expr::Sub(a,b) | Expr::Mul(a,b) | Expr::Div(a,b) => { remove_confinement(a); remove_confinement(b); }
+            Expr::Add(a, b) | Expr::Sub(a, b) | Expr::Mul(a, b) | Expr::Div(a, b) => {
+                remove_confinement(a);
+                remove_confinement(b);
+            }
             _ => {}
         }
     }
     fn modify(f: &mut Formula) {
         match f {
-            Formula::Cmp {lhs,rhs,..} => { remove_confinement(lhs); remove_confinement(rhs); }
-            Formula::And(fs) | Formula::Or(fs) => for f in fs { modify(f); },
+            Formula::Cmp { lhs, rhs, .. } => {
+                remove_confinement(lhs);
+                remove_confinement(rhs);
+            }
+            Formula::And(fs) | Formula::Or(fs) => {
+                for f in fs {
+                    modify(f);
+                }
+            }
             Formula::Not(f) => modify(f),
         }
     }
-    if let StampedBody::Algebraic {constraints,..} = &mut sys.body { for c in constraints { modify(&mut c.formula); } }
-    let p = BTreeMap::from([("dtfin_nm".into(),0.5),("dlg_nm".into(),-1.2),("dphim".into(),-0.02),("temp_k".into(),360.0)]);
-    let (sol, unsafe_root) = simulate_stamped(&sys,&p,&BTreeMap::new()).expect("unconfined device equilibrium");
-    assert!(unsafe_root, "unconfined leakage must exceed 10 pA/um: {}",sol["id_leak_ua_fin7"]);
+    if let StampedBody::Algebraic { constraints, .. } = &mut sys.body {
+        for c in constraints {
+            modify(&mut c.formula);
+        }
+    }
+    let p = BTreeMap::from([
+        ("dtfin_nm".into(), 0.5),
+        ("dlg_nm".into(), -1.2),
+        ("dphim".into(), -0.02),
+        ("temp_k".into(), 360.0),
+    ]);
+    let (sol, unsafe_root) =
+        simulate_stamped(&sys, &p, &BTreeMap::new()).expect("unconfined device equilibrium");
+    assert!(
+        unsafe_root,
+        "unconfined leakage must exceed 10 pA/um: {}",
+        sol["id_leak_ua_fin7"]
+    );
 }
 
 #[test]
 fn guarded_bandgap_full_box_interval_certificate() {
-    let source = fs::read_to_string(repo_root().join("benchmarks/sp/04b_ihp_sige_bandgap_guarded_unsat.sp")).unwrap();
+    let source =
+        fs::read_to_string(repo_root().join("benchmarks/sp/04b_ihp_sige_bandgap_guarded_unsat.sp"))
+            .unwrap();
     let sys = stamp::stamp_deck(&parser::parse_deck(&source).unwrap()).unwrap();
     let split_vars = ["temp_k", "v_e0", "v_ve2", "v_vc1", "vdd", "deg_ge"].map(String::from);
-    let boxes = paving::prove_unsat(&sys,&split_vars,511).expect("global guarded bandgap certificate");
+    let boxes =
+        paving::prove_unsat(&sys, &split_vars, 511).expect("global guarded bandgap certificate");
     println!("Bandgap global proof: {boxes} boxes");
 }
 
@@ -1298,7 +1637,10 @@ fn contractors_never_close_known_sat_boxes() {
     for unsafe_expr in ["v(a)>0.5", "v(a)*v(a)>0.5", "exp(v(a))>2"] {
         let source = format!(".expected unsat\n.param supply [0,1]\nV1 a 0 DC {{supply}}\nR1 a 0 1k\n.unsafe {unsafe_expr}\n");
         let sys = stamp::stamp_deck(&parser::parse_deck(&source).unwrap()).unwrap();
-        assert!(paving::prove_unsat(&sys,&["supply".into()],31).is_err(), "known SAT box was closed: {unsafe_expr}");
+        assert!(
+            paving::prove_unsat(&sys, &["supply".into()], 31).is_err(),
+            "known SAT box was closed: {unsafe_expr}"
+        );
     }
 }
 
@@ -1307,10 +1649,17 @@ fn coupled_pn_poisson_sg_equilibrium() {
     let source = ".mode dc\n.pdk sky130\n.tcad_pn_1d pn nodes=5 length_um=0.6 junction_um=0.3 q_dope=1 nd_plus=1 temp=300 v_bias=0\n.unsafe E_peak_v_per_um_pn>80\n";
     let sys = stamp::stamp_deck(&parser::parse_deck(source).unwrap()).unwrap();
     let mut fixed = BTreeMap::new();
-    for i in 1..4 { fixed.insert(format!("phin_pn_{i}"),0.0); fixed.insert(format!("phip_pn_{i}"),0.0); }
-    let seed = BTreeMap::from([("psi_pn_1".into(),-0.25),("psi_pn_2".into(),0.20),("psi_pn_3".into(),0.30)]);
-    let (sol, unsafe_root) = simulate_stamped(&sys,&fixed,&seed).expect("coupled PN equilibrium");
-    assert!(!unsafe_root && sol["J_a_per_cm2_pn"].abs()<1e-9);
+    for i in 1..4 {
+        fixed.insert(format!("phin_pn_{i}"), 0.0);
+        fixed.insert(format!("phip_pn_{i}"), 0.0);
+    }
+    let seed = BTreeMap::from([
+        ("psi_pn_1".into(), -0.25),
+        ("psi_pn_2".into(), 0.20),
+        ("psi_pn_3".into(), 0.30),
+    ]);
+    let (sol, unsafe_root) = simulate_stamped(&sys, &fixed, &seed).expect("coupled PN equilibrium");
+    assert!(!unsafe_root && sol["J_a_per_cm2_pn"].abs() < 1e-9);
     assert!(sol["E_peak_v_per_um_pn"] > 0.1);
 }
 
@@ -1321,13 +1670,25 @@ fn derivative_helpers_cover_exact_method_samples_and_keep_ring_compact() {
         let output = compile_str(&source, Dialect::Smt2Exp, None, None).unwrap();
         for k in 0..=2 {
             let declaration = format!("(declare-fun dx_0_s{k} () Real)");
-            assert_eq!(output.matches(&declaration).count(), usize::from(k >= first));
+            assert_eq!(
+                output.matches(&declaration).count(),
+                usize::from(k >= first)
+            );
         }
     }
-    let source = fs::read_to_string(repo_root().join("benchmarks/sp/08_gt2n_gaa_ring_oscillator_3stage_ode.sp")).unwrap();
+    let source = fs::read_to_string(
+        repo_root().join("benchmarks/sp/08_gt2n_gaa_ring_oscillator_3stage_ode.sp"),
+    )
+    .unwrap();
     let output = compile_str(&source, Dialect::Smt2Exp, None, None).unwrap();
-    assert!(output.lines().count() < 900, "coupled Miller stamp expanded again");
-    assert!(output.len() < 1_000_000, "coupled Miller stamp duplicated expressions");
+    assert!(
+        output.lines().count() < 900,
+        "coupled Miller stamp expanded again"
+    );
+    assert!(
+        output.len() < 1_000_000,
+        "coupled Miller stamp duplicated expressions"
+    );
 }
 
 #[test]
@@ -1335,17 +1696,35 @@ fn bipolar_reverse_bc_transport_and_base_injection() {
     for (kind, polarity) in [("NPN", 1.0), ("PNP", -1.0)] {
         let source = format!(".mode dc\n.model TEST {kind} IS=1e-16 BF=45 BR=2\nQ1 c b 0 TEST area=2 vt=0.025\n.unsafe v(c)>2\n");
         let sys = stamp::stamp_deck(&parser::parse_deck(&source).unwrap()).unwrap();
-        let StampedBody::Algebraic { constraints, .. } = sys.body else { panic!("expected DC") };
-        let env = BTreeMap::from([("v_b".into(), polarity * 0.7), ("v_c".into(), -polarity * 0.1)]);
+        let StampedBody::Algebraic { constraints, .. } = sys.body else {
+            panic!("expected DC")
+        };
+        let env = BTreeMap::from([
+            ("v_b".into(), polarity * 0.7),
+            ("v_c".into(), -polarity * 0.1),
+        ]);
         let forward = 2e-16 * (28.0_f64.exp() - 1.0);
         let reverse = 2e-16 * (32.0_f64.exp() - 1.0);
-        for (name, expected) in [("ic_Q1", polarity * (forward - 1.5 * reverse)), ("ib_Q1", polarity * (forward / 45.0 + reverse / 2.0))] {
-            let rhs = constraints.iter().find_map(|c| match &c.formula {
-                Formula::Cmp { op: CmpOp::Eq, lhs: Expr::Var(n), rhs } if n == name => Some(rhs),
-                _ => None,
-            }).expect("BJT constitutive equation");
+        for (name, expected) in [
+            ("ic_Q1", polarity * (forward - 1.5 * reverse)),
+            ("ib_Q1", polarity * (forward / 45.0 + reverse / 2.0)),
+        ] {
+            let rhs = constraints
+                .iter()
+                .find_map(|c| match &c.formula {
+                    Formula::Cmp {
+                        op: CmpOp::Eq,
+                        lhs: Expr::Var(n),
+                        rhs,
+                    } if n == name => Some(rhs),
+                    _ => None,
+                })
+                .expect("BJT constitutive equation");
             let actual = rhs.eval_f64(&env, 0.0).unwrap();
-            assert!((actual - expected).abs() < 1e-12 * expected.abs(), "{kind} {name}: {actual} != {expected}");
+            assert!(
+                (actual - expected).abs() < 1e-12 * expected.abs(),
+                "{kind} {name}: {actual} != {expected}"
+            );
         }
     }
 }

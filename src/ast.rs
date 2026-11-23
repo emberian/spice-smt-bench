@@ -146,7 +146,9 @@ impl Expr {
         Expr::Exp(Box::new(a))
     }
 
-    pub fn sqrt(a: Expr) -> Self { Expr::Sqrt(Box::new(a)) }
+    pub fn sqrt(a: Expr) -> Self {
+        Expr::Sqrt(Box::new(a))
+    }
 
     pub fn ln1p_exp(a: Expr) -> Self {
         Expr::Ln1pExp(Box::new(a))
@@ -157,8 +159,9 @@ impl Expr {
         f(self);
         match self {
             Expr::Neg(a) | Expr::Exp(a) | Expr::Ln1pExp(a) | Expr::Sqrt(a) => a.visit(f),
-            Expr::Add(a,b) | Expr::Sub(a,b) | Expr::Mul(a,b) | Expr::Div(a,b) => {
-                a.visit(f); b.visit(f);
+            Expr::Add(a, b) | Expr::Sub(a, b) | Expr::Mul(a, b) | Expr::Div(a, b) => {
+                a.visit(f);
+                b.visit(f);
             }
             _ => {}
         }
@@ -448,7 +451,10 @@ impl Waveform {
                 } else {
                     let u = Expr::div(Expr::sub(Expr::Time, t0.clone()), width.clone());
                     let u2 = Expr::mul(u.clone(), u);
-                    Expr::add(base.clone(), Expr::mul(amp.clone(), Expr::exp(Expr::neg(u2))))
+                    Expr::add(
+                        base.clone(),
+                        Expr::mul(amp.clone(), Expr::exp(Expr::neg(u2))),
+                    )
                 }
             }
             Waveform::SmoothStep {
@@ -462,8 +468,17 @@ impl Waveform {
                 } else {
                     let arg = Expr::neg(Expr::div(Expr::sub(Expr::Time, t0.clone()), tau.clone()));
                     let denom = Expr::add(Expr::num(1.0), Expr::exp(arg));
-                    let initial = Expr::div(Expr::num(1.0), Expr::add(Expr::num(1.0), Expr::exp(Expr::div(t0.clone(), tau.clone()))));
-                    let transition = Expr::div(Expr::sub(Expr::div(Expr::num(1.0), denom), initial.clone()), Expr::sub(Expr::num(1.0), initial));
+                    let initial = Expr::div(
+                        Expr::num(1.0),
+                        Expr::add(
+                            Expr::num(1.0),
+                            Expr::exp(Expr::div(t0.clone(), tau.clone())),
+                        ),
+                    );
+                    let transition = Expr::div(
+                        Expr::sub(Expr::div(Expr::num(1.0), denom), initial.clone()),
+                        Expr::sub(Expr::num(1.0), initial),
+                    );
                     Expr::add(base.clone(), Expr::mul(step.clone(), transition))
                 }
             }
@@ -667,12 +682,47 @@ impl Element {
             Self::CoupledInductors { .. } => Vec::new(),
             Self::VoltageSource { n_pos, n_neg, .. } => vec![n_pos.as_str(), n_neg.as_str()],
             Self::CurrentSource { n_pos, n_neg, .. } => vec![n_pos.as_str(), n_neg.as_str()],
-            Self::Diode { n_anode, n_cathode, .. } => vec![n_anode.as_str(), n_cathode.as_str()],
-            Self::Mosfet { n_drain, n_gate, n_source, n_bulk, .. } => vec![n_drain.as_str(), n_gate.as_str(), n_source.as_str(), n_bulk.as_str()],
-            Self::Bjt { n_col, n_base, n_emit, .. } => vec![n_col.as_str(), n_base.as_str(), n_emit.as_str()],
+            Self::Diode {
+                n_anode, n_cathode, ..
+            } => vec![n_anode.as_str(), n_cathode.as_str()],
+            Self::Mosfet {
+                n_drain,
+                n_gate,
+                n_source,
+                n_bulk,
+                ..
+            } => vec![
+                n_drain.as_str(),
+                n_gate.as_str(),
+                n_source.as_str(),
+                n_bulk.as_str(),
+            ],
+            Self::Bjt {
+                n_col,
+                n_base,
+                n_emit,
+                ..
+            } => vec![n_col.as_str(), n_base.as_str(), n_emit.as_str()],
             Self::MlccCap { n_pos, n_neg, .. } => vec![n_pos.as_str(), n_neg.as_str()],
-            Self::PcbMicrostrip { n_in, n_out, n_ref, .. } => vec![n_in.as_str(), n_out.as_str(), n_ref.as_str()],
-            Self::PcbCoupledDiffpair { in_p, in_n, out_p, out_n, ref_in, ref_out, .. } => vec![in_p.as_str(), in_n.as_str(), out_p.as_str(), out_n.as_str(), ref_in.as_str(), ref_out.as_str()],
+            Self::PcbMicrostrip {
+                n_in, n_out, n_ref, ..
+            } => vec![n_in.as_str(), n_out.as_str(), n_ref.as_str()],
+            Self::PcbCoupledDiffpair {
+                in_p,
+                in_n,
+                out_p,
+                out_n,
+                ref_in,
+                ref_out,
+                ..
+            } => vec![
+                in_p.as_str(),
+                in_n.as_str(),
+                out_p.as_str(),
+                out_n.as_str(),
+                ref_in.as_str(),
+                ref_out.as_str(),
+            ],
             Self::TcadFinFet2D { .. } => Vec::new(),
             Self::TcadGaaElectroThermal { .. } => Vec::new(),
             Self::TcadDiode1D { .. } => Vec::new(),
@@ -707,33 +757,123 @@ impl Element {
             Self::CoupledInductors { k, .. } => vec![k],
             Self::VoltageSource { .. } => Vec::new(),
             Self::CurrentSource { .. } => Vec::new(),
-            Self::Diode { area, vt_override, temp_k, .. } => {
+            Self::Diode {
+                area,
+                vt_override,
+                temp_k,
+                ..
+            } => {
                 let mut values = vec![area];
                 values.extend(temp_k.as_ref());
                 values.extend(vt_override.as_ref());
                 values
-            },
-            Self::Mosfet { w, l, nfin, dtfin_nm, dvth, dlisp_nm, rth, vt_override, tamb_k, .. } => {
+            }
+            Self::Mosfet {
+                w,
+                l,
+                nfin,
+                dtfin_nm,
+                dvth,
+                dlisp_nm,
+                rth,
+                vt_override,
+                tamb_k,
+                ..
+            } => {
                 let mut values = vec![dtfin_nm, dvth, dlisp_nm];
-                values.extend(w.as_ref()); values.extend(l.as_ref()); values.extend(nfin.as_ref());
+                values.extend(w.as_ref());
+                values.extend(l.as_ref());
+                values.extend(nfin.as_ref());
                 values.extend(rth.as_ref());
                 values.extend(vt_override.as_ref());
                 values.extend(tamb_k.as_ref());
                 values
-            },
-            Self::Bjt { area, deg_ev, vt_override, temp_k, .. } => {
+            }
+            Self::Bjt {
+                area,
+                deg_ev,
+                vt_override,
+                temp_k,
+                ..
+            } => {
                 let mut values = vec![area];
                 values.extend(deg_ev.as_ref());
                 values.extend(vt_override.as_ref());
                 values.extend(temp_k.as_ref());
                 values
-            },
-            Self::MlccCap { c0, c_min, vsat, esr, esl, .. } => vec![c0, c_min, vsat, esr, esl],
-            Self::PcbMicrostrip { len, w0, dw, h0, dh, t_cu, er, sigma_cu, .. } => vec![len, w0, dw, h0, dh, t_cu, er, sigma_cu],
-            Self::PcbCoupledDiffpair { len, w0, dw, s0, ds, h0, dh, t_cu, er_p, er_n, l_via, l_slot, r_ret, sigma_cu, .. } => vec![len, w0, dw, s0, ds, h0, dh, t_cu, er_p, er_n, l_via, l_slot, r_ret, sigma_cu],
-            Self::TcadFinFet2D { lg_nm, tfin_nm, eot_nm, vgs, vds, phim_shift, temp_k, nbody_cm3, .. } => vec![lg_nm, tfin_nm, eot_nm, vgs, vds, phim_shift, temp_k, nbody_cm3],
-            Self::TcadGaaElectroThermal { lg_nm, wns_nm, tns_nm, eot_nm, lisp_nm, vgs, vds, tamb_k, rth_kw, .. } => vec![lg_nm, wns_nm, tns_nm, eot_nm, lisp_nm, vgs, vds, tamb_k, rth_kw],
-            Self::TcadDiode1D { q_dope, nd_plus, temp, v_bias, .. } => vec![q_dope, nd_plus, temp, v_bias],
+            }
+            Self::MlccCap {
+                c0,
+                c_min,
+                vsat,
+                esr,
+                esl,
+                ..
+            } => vec![c0, c_min, vsat, esr, esl],
+            Self::PcbMicrostrip {
+                len,
+                w0,
+                dw,
+                h0,
+                dh,
+                t_cu,
+                er,
+                sigma_cu,
+                ..
+            } => vec![len, w0, dw, h0, dh, t_cu, er, sigma_cu],
+            Self::PcbCoupledDiffpair {
+                len,
+                w0,
+                dw,
+                s0,
+                ds,
+                h0,
+                dh,
+                t_cu,
+                er_p,
+                er_n,
+                l_via,
+                l_slot,
+                r_ret,
+                sigma_cu,
+                ..
+            } => vec![
+                len, w0, dw, s0, ds, h0, dh, t_cu, er_p, er_n, l_via, l_slot, r_ret, sigma_cu,
+            ],
+            Self::TcadFinFet2D {
+                lg_nm,
+                tfin_nm,
+                eot_nm,
+                vgs,
+                vds,
+                phim_shift,
+                temp_k,
+                nbody_cm3,
+                ..
+            } => vec![
+                lg_nm, tfin_nm, eot_nm, vgs, vds, phim_shift, temp_k, nbody_cm3,
+            ],
+            Self::TcadGaaElectroThermal {
+                lg_nm,
+                wns_nm,
+                tns_nm,
+                eot_nm,
+                lisp_nm,
+                vgs,
+                vds,
+                tamb_k,
+                rth_kw,
+                ..
+            } => vec![
+                lg_nm, wns_nm, tns_nm, eot_nm, lisp_nm, vgs, vds, tamb_k, rth_kw,
+            ],
+            Self::TcadDiode1D {
+                q_dope,
+                nd_plus,
+                temp,
+                v_bias,
+                ..
+            } => vec![q_dope, nd_plus, temp, v_bias],
         }
     }
 }
