@@ -19,4 +19,5 @@ rev = "93a3eed3364281a9dbf9652bb52356a8db65057c"
 [[require]]
 name = "LeanCert"
 git = "https://github.com/alerad/leancert"
-rev = "d3e7f686eb6bfdcbb987eeb931c0bab953e8f43e"
+# LeanCert PR 131 exposes the interval kernels through Lean 4.35 modules.
+rev = "1aefac6670803b7b2dd384dd081c3740ecdfeb69"

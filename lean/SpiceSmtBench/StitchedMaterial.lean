@@ -45,6 +45,8 @@ theorem material_ok (ep en pitch : ℝ)
     (hep : ep ∈ epBox) (hen : en ∈ enBox) (hpitch : pitch ∈ pitchBox) :
     materialCheck (material (atPoint epBox ep hep) (atPoint enBox en hen) (atPoint pitchBox pitch hpitch)) := by
   unfold materialCheck
+  -- Only the interval endpoints enter the computation. The kernel can reduce
+  -- the decision proof while the real fabrication parameters remain free.
   run_tac
     let goal ← Lean.Elab.Tactic.getMainGoal
     goal.assign (← Lean.Meta.mkDecideProof (← goal.getType))

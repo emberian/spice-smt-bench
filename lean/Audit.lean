@@ -37,4 +37,31 @@ private theorem bench09a_pcb_microstrip_dfm_proved_real : Bench_09a_pcb_microstr
 #print axioms bench14a_gaa_thermal_safety_proved
 #print axioms bench14b_gaa_thermal_excursion_proved
 
+/-- Fail the audit if a generated target lacks a real proof or a published real
+proof gains an axiom outside Lean's standard three. -/
+private def checkRealProofs : Lean.CoreM Unit := do
+  let env ← Lean.getEnv
+  let declarations (moduleName : Lean.Name) : Lean.CoreM (Array Lean.Name) := do
+    let some idx := env.getModuleIdx? moduleName | throwError "missing audit input {moduleName}"
+    return env.header.moduleData[idx.toNat]!.constNames
+  let generated := (← declarations `SpiceSmtBench.TargetsGenerated).filter fun name =>
+    name.getPrefix == `SpiceSmtBench.Targets && name.getString!.startsWith "Bench_"
+  let proofs := env.constants.foldStage2 (fun acc name _ => acc.push name) (← declarations `SpiceSmtBench.Targets)
+  let allowed := #[``propext, ``Classical.choice, ``Quot.sound]
+  let mut covered : Lean.NameSet := {}
+  for name in proofs do
+    let info ← Lean.getConstInfo name
+    if !info.isTheorem then continue
+    let .app head interpretation := info.type | continue
+    let some target := head.getAppFn.constName? | continue
+    if !interpretation.isConstOf ``realTF || !generated.contains target then continue
+    let extra := (← Lean.collectAxioms name).filter fun axiomName => !allowed.contains axiomName
+    unless extra.isEmpty do throwError "{name} uses unexpected axioms {extra}"
+    covered := covered.insert target
+  let missing := generated.filter fun target => !covered.contains target
+  unless !generated.isEmpty && missing.isEmpty do throwError "real proof coverage failed: {missing}"
+  Lean.logInfo m!"Verified standard-axiom proofs for {covered.size}/{generated.size} generated targets over ℝ."
+
+run_cmd Lean.Elab.Command.liftCoreM checkRealProofs
+
 end SpiceSmtBench.Targets.Audit
