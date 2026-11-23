@@ -516,6 +516,42 @@ theorem paving_unsat_sound {R : Type} (TF : TranscendentalField R)
       | inl hl => exact paving_unsat_sound TF Active checkLeaf hleaf_sound left lBox env hand.1 hl
       | inr hr => exact paving_unsat_sound TF Active checkLeaf hleaf_sound right rBox env hand.2 hr
 
+/-- A softplus enclosure that remains finite at large positive gate drive.
+It follows from max(0,x) ≤ log(1+exp x) ≤ max(0,x)+1. -/
+def QInterval.softplus (a : QInterval) : QInterval :=
+  ⟨QRat.max QRat.zero a.lo, QRat.add (QRat.max QRat.zero a.hi) QRat.one⟩
+
+theorem QInterval.softplus_sound {R : Type} (TF : TranscendentalField R)
+    (a : QInterval) (x : R) (hx : memInterval TF a x) :
+    memInterval TF a.softplus (TF.ln1pExp x) := by
+  have reflect {u v : R} (h : TF.le (TF.exp u) (TF.exp v)) : TF.le u v := by
+    rcases TF.le_total u v with hu | hv
+    · exact hu
+    · exact TF.exp_injective u v (TF.le_antisymm _ _ h (TF.exp_mono _ _ hv)) ▸ TF.le_refl v
+  have hxsp : TF.le x (TF.ln1pExp x) := by
+    apply reflect
+    rw [TF.ln1pExp_spec]
+    simpa only [TF.zero_add] using TF.add_le_add _ _ _ _ (one_nonneg TF) (TF.le_refl (TF.exp x))
+  constructor
+  · change TF.le (QRat.eval TF (QRat.max QRat.zero a.lo)) _
+    unfold QRat.max
+    split
+    · exact TF.le_trans _ _ _ hx.1 hxsp
+    · rw [QRat.eval_zero]; exact (PhysicsModels.ekv_softplus_witness_nonneg TF x).2
+  · let u := QRat.eval TF (QRat.max QRat.zero a.hi)
+    have hzero : TF.le TF.zero u := by
+      simpa only [QRat.eval_zero] using QRat.le_max_left TF QRat.zero a.hi
+    have hu := TF.le_trans _ _ u hx.2 (QRat.le_max_right TF _ _)
+    have hu1 : TF.le TF.one (TF.exp u) := by simpa only [TF.exp_zero] using TF.exp_mono _ _ hzero
+    change TF.le _ (QRat.eval TF (QRat.add _ QRat.one))
+    rw [QRat.eval_add, QRat.eval_one]
+    apply reflect
+    rw [TF.ln1pExp_spec, TF.exp_add]
+    have h := TF.mul_le_mul_nonneg_left (TF.exp u) _ _
+      (((TF.lt_iff_le_not_le _ _).mp (TF.exp_pos u)).1) (TF.one_add_le_exp TF.one)
+    rw [TF.mul_add, TF.mul_one] at h
+    exact TF.le_trans _ _ _ (TF.add_le_add _ _ _ _ hu1 (TF.exp_mono x u hu)) h
+
 /-- Arithmetic syntax shared by concrete certificates and their semantics. -/
 inductive PExpr where
   | const : QRat → PExpr
@@ -525,6 +561,7 @@ inductive PExpr where
   | sub : PExpr → PExpr → PExpr
   | mul : PExpr → PExpr → PExpr
   | div : PExpr → PExpr → PExpr
+  | softplus : PExpr → PExpr
   | exp : PExpr → PExpr
   deriving Repr
 
@@ -536,6 +573,7 @@ def PExpr.eval {R : Type} (TF : TranscendentalField R) (env : Nat → R) : PExpr
   | .sub a b => TF.sub (a.eval TF env) (b.eval TF env)
   | .mul a b => TF.mul (a.eval TF env) (b.eval TF env)
   | .div a b => TF.div (a.eval TF env) (b.eval TF env)
+  | .softplus a => TF.ln1pExp (a.eval TF env)
   | .exp a => TF.exp (a.eval TF env)
 
 def evalPExpr (box : List QInterval) : PExpr → Option QInterval
@@ -546,6 +584,7 @@ def evalPExpr (box : List QInterval) : PExpr → Option QInterval
   | .sub a b => do return QInterval.sub (← evalPExpr box a) (← evalPExpr box b)
   | .mul a b => do return QInterval.mul (← evalPExpr box a) (← evalPExpr box b)
   | .div a b => do QInterval.divPos (← evalPExpr box a) (← evalPExpr box b)
+  | .softplus a => QInterval.softplus <$> evalPExpr box a
   | .exp a => do QInterval.exp (← evalPExpr box a)
 
 theorem memBox_lookup {R : Type} (TF : TranscendentalField R) :
@@ -570,6 +609,12 @@ theorem evalPExpr_sound {R : Type} (TF : TranscendentalField R) (box : List QInt
     | some v =>
       simp [evalPExpr, ha] at he
       subst iv; exact QInterval.neg_sound TF v _ (ih v ha)
+  | softplus a ih =>
+    cases ha : evalPExpr box a with
+    | none => simp [evalPExpr, ha] at he
+    | some v =>
+      simp [evalPExpr, ha] at he
+      subst iv; exact QInterval.softplus_sound TF v _ (ih v ha)
   | exp a ih =>
     cases ha : evalPExpr box a with
     | none => simp [evalPExpr, ha] at he

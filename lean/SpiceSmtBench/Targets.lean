@@ -1,4 +1,6 @@
-import SpiceSmtBench.PhysicsModels
+import Mathlib.Analysis.Complex.ExponentialBounds
+import SpiceSmtBench.RealPhysics
+import SpiceSmtBench.SramReplay
 import SpiceSmtBench.IntervalCheck
 import SpiceSmtBench.TargetsGenerated
 import SpiceSmtBench.PcbCertificate
@@ -9,15 +11,10 @@ import SpiceSmtBench.PcbCertificate
 Re-exports all 19 auto-generated SPICE / Multi-PDK / PCB / TCAD benchmark `Prop` definitions
 from `SpiceSmtBench.TargetsGenerated` and provides complete end-to-end machine-checked proofs:
 
-1. `bench01_diode_clipper_pvt_proved`: Full kernel-checked `UNSAT` proof of Benchmark 01
-   (`Bench_01_diode_clipper_pvt`) across the continuous 2D PVT box `v_sup ∈ [3.0, 3.6] V ×
-   vt ∈ [23.5 mV, 32.2 mV]` using rational scaling-and-squaring (`m = 7`, `2^7 = 128`) from
-   `IntervalCheck.exp_ge_qrat_iterSq`!
-2. `bench01_paving_certificate_proved`: a concrete two-leaf rational replay.
-3. `bench06_rc_diode_glitch_filter_proved`: a checked backward-Euler barrier.
-4. `bench09a_pcb_microstrip_dfm_proved`: a 23-box forward-bound certificate.
-5. Guarded/unguarded bandgap zero-current component lemmas. These do not
-   instantiate either generated bandgap target.
+The proved decks cover the diode clipper (01), FinFET inverter (02), nominal and damaged FinFET SRAM
+(03a, 03b), the guarded SiGe bandgap (04b), the guarded SCR (05), the RC glitch filter (06), and both PCB
+microstrip tolerances (09a, 09b). RealPhysics supplies the real instance for
+all nine. The bandgap lemmas below concern individual circuit components.
 -/
 
 namespace SpiceSmtBench.Targets
@@ -388,5 +385,485 @@ theorem bench09a_pcb_microstrip_dfm_proved {R : Type} (TF : TranscendentalField 
     (checkForwardLeaf_sound TF 5 pcbDefinitions pcbRanges pcbCertificates)
     pcbTree pcbRoot env pcbReplay hm ⟨hd, hn⟩
 -- END GENERATED PCB BRIDGE
+
+
+
+
+private noncomputable abbrev body (d : ℝ) := 13/2+d
+private noncomputable abbrev qmShift (d : ℝ) :=
+  4178112912843729/5000000000000000 * (1/(body d*body d) - 23668639053254437/1000000000000000000)
+private noncomputable abbrev aspect (d : ℝ) := (64+body d)/21
+private noncomputable abbrev dibl (k l : ℝ) := k * Real.exp (-(21/(2*l)))
+
+private theorem fin_shift_range {d : ℝ} (hd : -9/20 ≤ d ∧ d ≤ 9/20) :
+    -1/200 ≤ qmShift d ∧ qmShift d ≤ 1/200 := by
+  have hl : 6 ≤ body d := by dsimp [body]; linarith
+  have hu : body d ≤ 7 := by dsimp [body]; linarith
+  have hb : 0 < body d := by linarith
+  have ha := mul_self_le_mul_self (by norm_num : (0:ℝ) ≤ 6) hl
+  have hh := mul_self_le_mul_self hb.le hu
+  have h1 := one_div_le_one_div_of_le (by positivity : 0 < body d*body d) hh
+  have h2 := one_div_le_one_div_of_le (by norm_num : (0:ℝ) < 6*6) ha
+  dsimp [qmShift]; constructor <;> linarith
+
+private theorem softplus_range {y z : ℝ} (h : Real.exp y = 1+Real.exp z) :
+    z ≤ y ∧ y ≤ max 0 z + 1 := by
+  constructor
+  · apply Real.exp_le_exp.mp; rw [h]; linarith
+  · apply Real.exp_le_exp.mp
+    rw [h,Real.exp_add]
+    have ha := Real.exp_le_exp.mpr (le_max_right 0 z)
+    have hb := Real.exp_le_exp.mpr (le_max_left 0 z)
+    rw [Real.exp_zero] at hb
+    nlinarith only [ha,hb,mul_le_mul_of_nonneg_left Real.exp_one_gt_two.le (Real.exp_pos (max 0 z)).le]
+
+set_option maxHeartbeats 900000 in
+/-- The pull-up has enough drain voltage and overdrive to exceed the residual
+pull-down current even at the smallest aspect ratio in the 7 nm etch box. -/
+theorem bench02_asap7_inverter_snm_proved : Bench_02_asap7_finfet_inverter_snm realTF := by
+  intro vdd vi d dl t sup iv vin ii vo lp pf pr ip ln nf nr inn box phys unsafeV
+  dsimp only [realTF] at box phys unsafeV
+  push_cast at box phys unsafeV
+  obtain ⟨_,_,hd,hl,ht,hs,hv,ho⟩ := box
+  simp only [and_assoc] at phys
+  obtain ⟨_,_,_,htv,_,_,_,_,hpf0,hpf,hpr0,hpr,hip,_,_,_,_,hln0,hln,hnf0,hnf,_,_,hin,_,kcl,_⟩ := phys
+  let L := (1000000000:ℝ)*((21+dl)*(1/1000000000))
+  let D := 2*(4308666631/50000000000000*t)
+  let A := 2*((64+body d)/L)
+  let ep := 17/5 * Real.exp (-(L/(2*lp)))
+  let en := 16/5 * Real.exp (-(L/(2*ln)))
+  let p := 17/20 * ((sup-vin)-(7/25 + (-17/20000)*(t-300) + qmShift d - ep*(sup-vo)))
+  let n := 43/50 * (vin-(27/100 + (-17/20000)*(t-300) + qmShift d - en*vo))
+  change Real.exp pf = 1+Real.exp (p/D) at hpf
+  change Real.exp pr = 1+Real.exp ((p-(sup-vo))/D) at hpr
+  change Real.exp nf = 1+Real.exp (n/D) at hnf
+  change ip = -((13/50000000*A)*(pf*pf-pr*pr)/(1+1/10*pf)) at hip
+  change inn = (3/10000000*A)*(nf*nf-nr*nr)/(1+1/10*nf) at hin
+  have hL : 20 ≤ L := by dsimp [L]; linarith only [hl.1]
+  have hA : 0 < A := by dsimp [A,body]; positivity
+  have hD : 0 < D := by dsimp [D]; linarith only [htv]
+  have hDu : D ≤ 63/1000 := by dsimp [D]; linarith only [ht.2]
+  have he0 : 0 ≤ ep := by dsimp [ep]; positivity
+  have hln : 0 < ln ∧ ln ≤ 8/3 := by constructor <;> nlinarith [hd.1,hd.2]
+  have harg : 3+3/4 ≤ L/(2*ln) := (le_div_iff₀ (by linarith)).2 (by linarith)
+  have he3 : (27/10:ℝ)^3 ≤ Real.exp 3 := by
+    rw [show (3:ℝ) = (3:ℕ)*1 by norm_num,Real.exp_nat_mul]
+    exact pow_le_pow_left₀ (by norm_num) (by linarith [Real.exp_one_gt_d9]) _
+  have he := Real.exp_le_exp.mpr harg
+  rw [Real.exp_add] at he
+  have hx : 32 ≤ Real.exp (L/(2*ln)) := by
+    nlinarith only [he,mul_le_mul he3 (Real.add_one_le_exp (3/4)) (by norm_num) (Real.exp_pos _).le]
+  have henu : en ≤ 1/10 := by
+    dsimp [en]; rw [Real.exp_neg,← div_eq_mul_inv]; exact (div_le_iff₀ (Real.exp_pos _)).2 (by linarith)
+  have hevo : en*vo ≤ 27/500 := (mul_le_mul henu unsafeV.le ho.1 (by norm_num)).trans_eq (by norm_num)
+  obtain ⟨hsl,hsu⟩ := fin_shift_range hd
+  have hn : n/D ≤ 0 := div_nonpos_of_nonpos_of_nonneg (by dsimp [n]; linarith only [hv.2,hevo,ht.2,hsl]) hD.le
+  have hnf1 := (softplus_range hnf).2
+  rw [max_eq_left hn] at hnf1
+  have vdrop : 11/100 ≤ sup-vo := by linarith only [hs.1,unsafeV]
+  have hp : 5/2 ≤ p/D := (le_div_iff₀ hD).2 (by
+    dsimp [p]; linarith only [hs.1,hv.2,ht.1,hsu,hDu,mul_nonneg he0 (by linarith : 0 ≤ sup-vo)])
+  have hdrop : 17/10 ≤ (sup-vo)/D := (le_div_iff₀ hD).2 (by linarith)
+  have pfmin := hp.trans (softplus_range hpf).1
+  have prmax := (softplus_range hpr).2
+  have gap : 7/10 ≤ pf-pr := by
+    rcases le_total ((p-(sup-vo))/D) 0 with hz | hz
+    · rw [max_eq_left hz] at prmax; linarith
+    · rw [max_eq_right hz,sub_div] at prmax
+      linarith only [prmax,hdrop,(softplus_range hpf).1]
+  have del : 7/10*pf ≤ pf*pf-pr*pr := by
+    nlinarith only [mul_le_mul_of_nonneg_right gap hpf0,mul_nonneg (by linarith : 0 ≤ pf-pr) hpr0]
+  have hn1 : nf*nf-nr*nr ≤ 1 := by nlinarith only [mul_self_le_mul_self hnf0 hnf1,sq_nonneg nr]
+  have pden : 0 < 1+1/10*pf := by positivity
+  have nden : 0 < 1+1/10*nf := by positivity
+  have driveP : (3/10000000)*A < -ip := by
+    rw [hip,neg_neg]; apply (lt_div_iff₀ pden).2
+    have : 3/10000000*(1+1/10*pf) < 13/50000000*(pf*pf-pr*pr) := by linarith only [del,pfmin]
+    nlinarith only [mul_lt_mul_of_pos_right this hA]
+  have driveN : inn ≤ (3/10000000)*A := by
+    rw [hin]; apply (div_le_iff₀ nden).2
+    apply mul_le_mul_of_nonneg_left _ (by positivity)
+    linarith only [hn1,hnf0]
+  linarith only [driveP,driveN,kcl]
+
+private theorem qmShift_bounds {d : ℝ} (hd : -7/20 ≤ d ∧ d ≤ 7/20) :
+    -3/1000 ≤ qmShift d ∧ qmShift d ≤ 3/1000 := by
+  have hl : 123/20 ≤ body d := by dsimp [body]; linarith
+  have hu : body d ≤ 137/20 := by dsimp [body]; linarith
+  have hb : 0 < body d := by linarith
+  have hl' := mul_self_le_mul_self (by norm_num : 0 ≤ (123/20:ℝ)) hl
+  have hu' := mul_self_le_mul_self hb.le hu
+  have h1 : 1/(137/20*(137/20):ℝ) ≤ 1/(body d*body d) :=
+    one_div_le_one_div_of_le (by positivity) hu'
+  have h2 : 1/(body d*body d) ≤ 1/(123/20*(123/20):ℝ) :=
+    one_div_le_one_div_of_le (by norm_num) hl'
+  dsimp [qmShift]; constructor <;> linarith
+
+private theorem dibl_bounds {l z k : ℝ} (hl : 0 ≤ l) (hs : l*l = z)
+    (hz : 123/20 ≤ z ∧ z ≤ 137/20) (hk : 3 ≤ k ∧ k ≤ 16/5) :
+    4/100 ≤ dibl k l ∧ dibl k l ≤ 7/100 := by
+  have hlo : 42/17 ≤ l := by nlinarith
+  have hhi : l ≤ 21/8 := by nlinarith
+  have hd : 0 < 2*l := by linarith
+  have hl4 : 4 ≤ 21/(2*l) := (le_div_iff₀ hd).2 (by linarith)
+  have hh4 : 21/(2*l) ≤ 17/4 := (div_le_iff₀ hd).2 (by linarith)
+  have hpow : Real.exp (17/4) ^ 4 = Real.exp 1 ^ 17 := by
+    rw [← Real.exp_nat_mul, ← Real.exp_nat_mul]; norm_num
+  have h17 := pow_le_pow_left₀ (Real.exp_pos _).le Real.exp_one_lt_d9.le 17
+  have hx : Real.exp (17/4) ≤ 75 := by
+    by_contra! hn
+    have hlt := pow_lt_pow_left₀ hn (by norm_num) (by decide : 4 ≠ 0)
+    rw [hpow] at hlt; linarith
+  have hy : (50:ℝ) ≤ Real.exp 4 := by
+    have h := pow_le_pow_left₀ (by norm_num : (0:ℝ) ≤ 2.7182818283) Real.exp_one_gt_d9.le 4
+    rw [← Real.exp_nat_mul] at h; norm_num at h ⊢; linarith
+  have hE := Real.exp_pos (21/(2*l))
+  have hub := (Real.exp_le_exp.mpr hh4).trans hx
+  have hlb := hy.trans (Real.exp_le_exp.mpr hl4)
+  rw [dibl, Real.exp_neg, ← div_eq_mul_inv]
+  exact ⟨(le_div_iff₀ hE).2 (by linarith), (div_le_iff₀ hE).2 (by linarith)⟩
+
+set_option maxRecDepth 6000 in
+theorem bench03a_asap7_sram_read_margin_proved : Bench_03a_asap7_sram_6t_fin_etch_unsat realTF := by
+  intro d db phi lpa lda lga lpb ldb lgb state _sampleTime dx box phys
+  obtain ⟨hd, hdb, hphi, hbox⟩ := box
+  -- Keep the two implicit step equations folded while extracting static geometry.
+  obtain ⟨⟨_, _, _, hpa, hpa2, _, _, _, hda, hda2, _, _, _, hga, hga2, _⟩,
+    _, _, hpb, hpb2, _, _, _, hdb₀, hdb2, _, _, _, hgb, hgb2, init, steps⟩ := phys
+  dsimp only [realTF] at hd hdb hphi
+  push_cast at hd hdb hphi
+  have bz (x : ℝ) (h : -7/20 ≤ x ∧ x ≤ 7/20) : 123/20 ≤ body x ∧ body x ≤ 137/20 := by
+    dsimp [body]; constructor <;> linarith
+  have bz0 : 123/20 ≤ (13/2:ℝ) ∧ (13/2:ℝ) ≤ 137/20 := by norm_num
+  have puA := dibl_bounds hpa hpa2 (bz d hd) (k := 16/5) (by norm_num)
+  have puB := dibl_bounds hpb hpb2 (bz d hd) (k := 16/5) (by norm_num)
+  have pdA := dibl_bounds hda hda2 (bz d hd) (k := 3) (by norm_num)
+  have pdB := dibl_bounds hdb₀ hdb2 (bz db hdb) (k := 3) (by norm_num)
+  have pgA := dibl_bounds hga hga2 bz0 (k := 3) (by norm_num)
+  have pgB := dibl_bounds hgb hgb2 bz0 (k := 3) (by norm_num)
+  let env (k i : Nat) : ℝ := ([state k 0, state k 1, 33/100+qmShift d, dibl (16/5) lpa,
+    dibl (16/5) lpb, 13/50000000*aspect d, 8/25+qmShift d, 8/25+phi+qmShift db,
+    dibl 3 lda, dibl 3 ldb, 3/10000000*(2*aspect d), 3/10000000*(2*aspect db),
+    dibl 3 lga, dibl 3 lgb] : List ℝ).getD i 0
+  have mem (k : Nat) (hk : k ≤ 20) : memBox realTF SramCertificate.rootBox (env k) := by
+    obtain ⟨h0,h1⟩ := hbox k hk
+    dsimp only [realTF] at h0 h1
+    push_cast at h0 h1
+    have hq := qmShift_bounds hd
+    have hb := qmShift_bounds hdb
+    simp [memBox, memInterval, SramCertificate.rootBox, SramCertificate.range, realTF, QRat.eval, env,
+      aspect, body]
+    repeat' apply And.intro
+    all_goals linarith only [h0.1,h0.2,h1.1,h1.2,hq.1,hq.2,hb.1,hb.2,hd.1,hd.2,hdb.1,hdb.2,
+      hphi.1,hphi.2,puA.1,puA.2,puB.1,puB.2,pdA.1,pdA.2,pdB.1,pdB.2,pgA.1,pgA.2,pgB.1,pgB.2]
+  have inv (k : Nat) (hk : k ≤ 20) : 29/50 ≤ state k 0 ∧ state k 1 ≤ 1/5 := by
+    induction k with
+    | zero =>
+      obtain ⟨h0,h1⟩ := init
+      change state 0 0 = 7/10 at h0
+      change state 0 1 = 0 at h1
+      rw [h0,h1]; norm_num
+    | succ k ih =>
+      obtain ⟨q0,b0⟩ := ih (by omega)
+      obtain ⟨hq,hb⟩ := steps k (by omega)
+      have hprev (side : Bool) : (SramCertificate.previous side).eval realTF (env (k+1)) =
+          state k (if side then 1 else 0) := by
+        cases side
+        · apply sub_eq_iff_eq_add.mpr
+          simpa [SramCertificate.previous, SramCertificate.drive, SramCertificate.c, PExpr.eval,
+            realTF, QRat.eval, env, qmShift, aspect, body, dibl, dx] using hq
+        · apply sub_eq_iff_eq_add.mpr
+          simpa [SramCertificate.previous, SramCertificate.drive, SramCertificate.c, PExpr.eval,
+            realTF, QRat.eval, env, qmShift, aspect, body, dibl, dx] using hb
+      exact SramCertificate.invariantStep (env (k+1)) (mem _ hk)
+        (by rwa [hprev]) (by rwa [hprev])
+  rintro ⟨k,hk,hbad⟩
+  obtain ⟨hq,hb⟩ := inv k hk
+  change state k 0 - state k 1 < 3/25 at hbad
+  linarith
+
+private noncomputable abbrev thermal (t : ℝ) := 4308666631 / 50000000000000 * t
+private noncomputable abbrev gain (t : ℝ) := (t/300 * (t/300) * (t/300)) *
+  Real.exp (270772089507397/6250000000000 - (28/25)/thermal t)
+private noncomputable abbrev junction (k t v : ℝ) := k * gain t * (Real.exp (v/thermal t) - 1)
+
+/-- Uniform reverse-current floor and forward-current ceiling below 400 mV.
+Combining the temperature and bias exponents retains their shared thermal voltage. -/
+private theorem junctionBounds (k t v : ℝ) (hk : 0 ≤ k) (hk' : k ≤ 1/2000000000000000)
+    (ht : 273 ≤ t) (ht' : t ≤ 398) :
+    -(1/1000000000) ≤ junction k t v ∧
+    (v ≤ 2/5 → junction k t v ≤ 1/5000) := by
+  let d := thermal t
+  let c := k * (t/300 * (t/300) * (t/300))
+  have hd : 0 < d := by dsimp [d,thermal]; linarith
+  have hd' : d ≤ 343/10000 := by dsimp [d,thermal]; linarith
+  have ht₀ : 0 ≤ t/300 := by linarith
+  have hc : 0 ≤ c := by dsimp [c]; positivity
+  have hc' : c ≤ 3/2000000000000000 := by
+    have ht3 : (t/300)^3 ≤ (4/3 : ℝ)^3 := pow_le_pow_left₀ ht₀ (by linarith) _
+    have := mul_le_mul hk' (show t/300*(t/300)*(t/300) ≤ 3 by nlinarith) (by positivity) (by norm_num)
+    exact this.trans_eq (by ring)
+  let b : ℝ := 270772089507397/6250000000000 - (28/25)/d
+  have expBound (u : ℝ) (n : ℕ) (h : u ≤ n) : Real.exp u ≤ (3 : ℝ)^n := by
+    calc
+      Real.exp u ≤ Real.exp (n*1) := Real.exp_le_exp.mpr (by simpa using h)
+      _ = Real.exp 1 ^ n := Real.exp_nat_mul 1 n
+      _ ≤ 3^n := pow_le_pow_left₀ (Real.exp_pos _).le Real.exp_one_lt_three.le _
+  have hb : b ≤ 11 := by
+    have : (270772089507397/6250000000000 - 11) ≤ (28/25)/d :=
+      (le_div_iff₀ hd).2 (by linarith)
+    dsimp [b]; linarith
+  have hbase := mul_le_mul hc' (expBound b 11 (by exact_mod_cast hb)) (Real.exp_pos _).le (by norm_num)
+  have id : junction k t v = c * Real.exp (b+v/d) - c*Real.exp b := by
+    rw [Real.exp_add]; dsimp [c,b,d,junction,gain]; ring
+  rw [id]
+  constructor
+  · linarith [mul_nonneg hc (Real.exp_pos (b+v/d)).le]
+  · intro hv
+    have hbv : b+v/d ≤ 23 := by
+      have h : (v-28/25)/d ≤ 23-270772089507397/6250000000000 :=
+        (div_le_iff₀ hd).2 (by linarith)
+      dsimp [b]; linarith [sub_div v (28/25) d]
+    have := mul_le_mul hc' (expBound _ 23 (by exact_mod_cast hbv)) (Real.exp_pos _).le (by norm_num)
+    linarith [mul_nonneg hc (Real.exp_pos b).le]
+
+private theorem resistorBounds (v r lo hi : ℝ) (hr : 0 < r) (hl : lo ≤ r) (hh : r ≤ hi) :
+    (lo*(v/r) ≤ v ∧ v ≤ hi*(v/r)) ∨ (hi*(v/r) ≤ v ∧ v ≤ lo*(v/r)) := by
+  have h : r*(v/r) = v := by field_simp
+  rcases le_total 0 (v/r) with hp | hn
+  · exact Or.inl ⟨(mul_le_mul_of_nonneg_right hl hp).trans_eq h, h.symm.trans_le (mul_le_mul_of_nonneg_right hh hp)⟩
+  · exact Or.inr ⟨(mul_le_mul_of_nonpos_right hh hn).trans_eq h, h.symm.trans_le (mul_le_mul_of_nonpos_right hl hn)⟩
+
+/-- The two tapped base nodes and the 20 Ω emitter ballast exclude the 5 mA
+holding branch throughout the stamped temperature and supply boxes. -/
+theorem bench05_cmos_scr_latchup_holding_proved : Bench_05_cmos_scr_latchup_holding realTF := by
+  intro vs rw rs t sup iv nw ps ep en cp bp cn bn box phys unsafeH
+  dsimp only [realTF] at box phys unsafeH
+  push_cast at box phys unsafeH
+  obtain ⟨_, ⟨hrw, hrw'⟩, ⟨hrs, hrs'⟩, ⟨ht, ht'⟩, ⟨_,hs⟩, hn, hp, hep, hen⟩ := box
+  obtain ⟨_, hcp, hbp, hcn, hbn, he, hf, hw, hb, hi⟩ := phys
+  let kp : ℝ := 9/25000000000000000
+  let kn : ℝ := 1/2000000000000000
+  let a := junction kp t (ep-nw)
+  let b := junction kn t (ps-en)
+  let c := junction kp t (ps-nw)
+  let d := junction kn t (ps-nw)
+  change cp = -((a-c)-c/2) at hcp
+  change bp = -(a/18+c/2) at hbp
+  change cn = (b-d)-d/2 at hcn
+  change bn = b/45+d/2 at hbn
+  obtain ⟨ha, hfa⟩ := junctionBounds kp t (ep-nw) (by norm_num [kp]) (by norm_num [kp]) ht ht'
+  obtain ⟨hbb, hfb⟩ := junctionBounds kn t (ps-en) (by norm_num [kn]) (by norm_num [kn]) ht ht'
+  obtain ⟨hc, hfc⟩ := junctionBounds kp t (ps-nw) (by norm_num [kp]) (by norm_num [kp]) ht ht'
+  obtain ⟨hd, hfd⟩ := junctionBounds kn t (ps-nw) (by norm_num [kn]) (by norm_num [kn]) ht ht'
+  change _ ≤ a at ha; change _ → a ≤ _ at hfa
+  change _ ≤ b at hbb; change _ → b ≤ _ at hfb
+  change _ ≤ c at hc; change _ → c ≤ _ at hfc
+  change _ ≤ d at hd; change _ → d ≤ _ at hfd
+  have hwell := resistorBounds (sup-nw) rw 6 14 (by linarith) hrw hrw'
+  have hsub := resistorBounds ps rs 5 12 (by linarith) hrs hrs'
+  generalize (sup-nw)/rw = jw at *
+  generalize ps/rs = js at *
+  -- Each reverse-biased junction is bounded below independently of voltage.
+  -- Above 400 mV only the resistive and current-balance constraints are needed.
+  rcases le_or_gt (ep-nw) (2/5) with h | h
+  all_goals try specialize hfa h
+  all_goals rcases le_or_gt (ps-en) (2/5) with h | h
+  all_goals try specialize hfb h
+  all_goals rcases le_or_gt (ps-nw) (2/5) with h | h
+  all_goals try specialize hfc h
+  all_goals try specialize hfd h
+  all_goals rcases hwell with ⟨_,_⟩ | ⟨_,_⟩ <;> rcases hsub with ⟨_,_⟩ | ⟨_,_⟩ <;> linarith
+
+/-- An over-etched 138 μm trace on 118 μm laminate exceeds 56 Ω. The
+logarithms, square roots and DC solution below are exact real witnesses. -/
+theorem bench09b_pcb_microstrip_overetch_proved : Bench_09b_pcb_microstrip_overetch_sat realTF := by
+  let t : ℝ := 7 / 250000
+  let w : ℝ := 69 / 500000
+  let h : ℝ := 59 / 500000
+  let piDeck : ℝ := 3141592653589793 / 1000000000000000
+  let l := Real.log (2*h/t)
+  let u := (w + t/piDeck * (1+l))/h
+  let s := Real.sqrt (1+12/u)
+  let e := (77/20+1)/2 + (77/20-1)/(2*s)
+  let a := Real.sqrt e
+  let g := Real.log (u+361/250)
+  let z := (7539822368615503/20000000000000)/(a*(u+1393/1000+667/1000*g))
+  let r := (1/20)/(58000000*(w*t))
+  let rx := 50/(r+50)
+  have hl0 : 0 ≤ l := Real.log_nonneg (by norm_num [h,t])
+  have hl3 : l ≤ 3 := by
+    apply (Real.log_le_iff_le_exp (by norm_num [h,t])).2
+    have he := Real.add_one_le_exp (1/2)
+    have hid : Real.exp 3 = Real.exp (1/2) ^ 6 := by
+      convert Real.exp_nat_mul (1/2) 6 using 1; norm_num
+    rw [hid]
+    exact le_trans (by norm_num [h,t] : 2*h/t ≤ (1/2+1 : ℝ)^6) (pow_le_pow_left₀ (by norm_num) he _)
+  have hu : 1 ≤ u ∧ u ≤ 3/2 := by dsimp [u,w,h,t,piDeck]; constructor <;> linarith
+  have hs2 := Real.sq_sqrt (show 0 ≤ 1+12/u by positivity)
+  have hs : 3 ≤ s := by
+    have : 8 ≤ 12/u := (le_div_iff₀ (by linarith : 0 < u)).2 (by linarith)
+    dsimp [s]; nlinarith [Real.sqrt_nonneg (1+12/u)]
+  have he : 0 < e ∧ e ≤ 3 := by
+    dsimp [e]
+    constructor
+    · positivity
+    · have : (77/20-1)/(2*s) ≤ (3/1 - (77/20+1)/2 : ℝ) := by
+        apply (div_le_iff₀ (by positivity)).2; linarith
+      linarith
+  have ha : 0 < a ∧ a ≤ 7/4 := by
+    exact ⟨Real.sqrt_pos.2 he.1, (Real.sqrt_le_iff).2 ⟨by norm_num, by linarith⟩⟩
+  have hg0 : 0 ≤ g := Real.log_nonneg (by linarith)
+  have hg : g ≤ 5/4 := by
+    apply (Real.log_le_iff_le_exp (by linarith)).2
+    have hstep := Real.add_one_le_exp (1/8)
+    have hid : Real.exp (5/4) = Real.exp (1/8)^10 := by
+      convert Real.exp_nat_mul (1/8) 10 using 1; norm_num
+    rw [hid]
+    exact le_trans (by linarith : u + 361/250 ≤ (1/8+1 : ℝ)^10)
+      (pow_le_pow_left₀ (by norm_num) hstep _)
+  have hscale : 0 < u+1393/1000+667/1000*g := by linarith
+  have hz : 56 < z := by
+    apply (lt_div_iff₀ (mul_pos ha.1 hscale)).2
+    have bound := mul_le_mul ha.2 (show u+1393/1000+667/1000*g ≤ 3/2+1393/1000+667/1000*(5/4) by linarith)
+      hscale.le (by norm_num)
+    linarith
+  have hr : r = 3125/14007 := by norm_num [r,w,t]
+  refine ⟨-21/500000, 9/500000, t, 77/20, 1, -(1-rx)/r, rx, l, s, e, a,
+    Real.log (8/u+u/4), z, g, (1/20)*(z*a)/299792458,
+    ((1/20)*a/299792458)/z, r, ?_⟩
+  dsimp only [realTF]
+  push_cast
+  have hw : (9/50000 : ℝ) + -21/500000 = w := by norm_num [w]
+  have hh : (1/10000 : ℝ) + 9/500000 = h := by norm_num [h]
+  simp only [hw, hh]
+  repeat' constructor
+  all_goals first
+    | exact hz
+    | exact Real.sqrt_nonneg _
+    | exact Real.exp_log (by positivity)
+    | exact Real.mul_self_sqrt (by positivity)
+    | exact div_mul_cancel₀ _ (by linarith : z ≠ 0)
+    | rfl
+    | norm_num [rx, hr, r, t, w, h]
+
+private noncomputable abbrev sigeJunction (scale t offset bias : ℝ) :=
+  scale * ((t/300 * (t/300) * (t/300)) *
+    Real.exp (270772089507397/6250000000000 - (28/25-offset)/thermal t)) *
+    (Real.exp (bias/thermal t) - 1)
+
+/-- With a reference below 150 mV, every SiGe junction in its KCL sees at
+most 250 mV forward bias. Combining the bandgap and bias exponents retains
+their common temperature dependence. -/
+private theorem sige_ceiling (k t g v : ℝ) (hk : 0 ≤ k) (ht : 273 ≤ t) (ht' : t ≤ 373)
+    (hg : g ≤ 9/100) (hv : v ≤ 1/4) : sigeJunction k t g v ≤ k*1400000000 := by
+  let d := thermal t
+  let b := 270772089507397/6250000000000 - (28/25-g)/d
+  let f := t/300 * (t/300) * (t/300)
+  have hd : 0 < d := by dsimp [d,thermal]; linarith
+  have hd' : d ≤ 322/10000 := by dsimp [d,thermal]; linarith
+  have hf : 0 ≤ f := by dsimp [f]; positivity
+  have hf' : f ≤ 2 := by
+    have := pow_le_pow_left₀ (by linarith : 0 ≤ t/300) (by linarith : t/300 ≤ 5/4) 3
+    dsimp [f]; nlinarith
+  have hb : b+v/d ≤ 20 := by
+    have h : (v-(28/25-g))/d ≤ 20-270772089507397/6250000000000 :=
+      (div_le_iff₀ hd).2 (by linarith)
+    dsimp [b]; linarith [sub_div v (28/25-g) d]
+  have hex : Real.exp (b+v/d) ≤ 700000000 := by
+    apply (Real.exp_le_exp.mpr hb).trans
+    rw [show (20:ℝ) = (20:ℕ)*1 by norm_num,Real.exp_nat_mul]
+    exact (pow_le_pow_left₀ (Real.exp_pos _).le (by linarith [Real.exp_one_lt_d9] : Real.exp 1 ≤ 11/4) 20).trans (by norm_num)
+  have hmul := mul_le_mul hf' hex (Real.exp_pos _).le (by norm_num)
+  have id : sigeJunction k t g v = k * (f*Real.exp (b+v/d) - f*Real.exp b) := by
+    rw [Real.exp_add]; dsimp [sigeJunction,b,d,f]; ring
+  rw [id]
+  apply mul_le_mul_of_nonneg_left _ hk
+  linarith [mul_nonneg hf (Real.exp_pos b).le]
+
+private theorem startup_floor (t v : ℝ) (ht : 273 ≤ t) (ht' : t ≤ 373) (hv : 3/10 ≤ v) :
+    1/20000000 ≤ sigeJunction (1/10000000000) t 0 v := by
+  let d := thermal t
+  let b := 270772089507397/6250000000000 - (28/25)/d
+  let f := t/300 * (t/300) * (t/300)
+  have hd : 0 < d := by dsimp [d,thermal]; linarith
+  have hd' : 235/10000 ≤ d := by dsimp [d,thermal]; linarith
+  have hf : 3/4 ≤ f := by
+    have := pow_le_pow_left₀ (by norm_num : 0 ≤ (91/100:ℝ)) (by linarith : 91/100 ≤ t/300) 3
+    dsimp [f]; nlinarith
+  have hb : 8 ≤ b+v/d := by
+    have h : 8-270772089507397/6250000000000 ≤ (v-28/25)/d := (le_div_iff₀ hd).2 (by linarith)
+    dsimp [b]; linarith [sub_div v (28/25) d]
+  have hx : 2 ≤ Real.exp (v/d) := Real.exp_one_gt_two.le.trans (Real.exp_le_exp.mpr
+    ((le_div_iff₀ hd).2 (by dsimp [d,thermal]; linarith)))
+  have he : (1500:ℝ) ≤ Real.exp (b+v/d) := by
+    apply LE.le.trans _ (Real.exp_le_exp.mpr hb)
+    rw [show (8:ℝ) = (8:ℕ)*1 by norm_num,Real.exp_nat_mul]
+    exact (by norm_num : (1500:ℝ) ≤ (5/2)^8).trans
+      (pow_le_pow_left₀ (by norm_num) (by linarith [Real.exp_one_gt_d9] : 5/2 ≤ Real.exp 1) _)
+  rw [Real.exp_add] at he
+  have hh := mul_le_mul_of_nonneg_left (by linarith : Real.exp (v/d)/2 ≤ Real.exp (v/d)-1)
+    (Real.exp_pos b).le
+  have hi : 750 ≤ Real.exp b*(Real.exp (v/d)-1) := by linarith
+  have := mul_le_mul hf hi (by norm_num) (by linarith)
+  change _ ≤ (1/10000000000)*(f*Real.exp (270772089507397/6250000000000 - (28/25-0)/d))*(Real.exp (v/d)-1)
+  rw [sub_zero]; change _ ≤ (1/10000000000)*(f*Real.exp b)*(Real.exp (v/d)-1)
+  linarith only [this]
+
+set_option maxHeartbeats 1600000 in
+theorem bench04b_sige_bandgap_guarded_proved : Bench_04b_ihp_sige_bandgap_guarded_unsat realTF := by
+  intro vdd t g sup iv ref vc f hfwdR mp f2 r2 mp2 e sk ic ib e2 sk2 ic2 ib2 vs ivs di box phys unsafeRef
+  dsimp only [realTF] at box phys unsafeRef
+  push_cast at box phys unsafeRef
+  obtain ⟨hvd,ht,hg,_,href,hvc,he,he2,_⟩ := box
+  simp only [and_assoc] at phys
+  obtain ⟨hs,_,htv,hf0,hf,hr0,hr,hm,_,_,_,_,_,_,_,hsk0,hsk,hic,hib,_,_,_,hib2,hvs,hdi,_,kcl,_⟩ := phys
+  let k1 : ℝ := 1/312500000000000000
+  let k2 : ℝ := 1/39062500000000000
+  let j := sigeJunction k1 t g (ref-e)
+  let j2 := sigeJunction k2 t g (ref-e2)
+  let jc := sigeJunction k2 t g (ref-vc)
+  have jb := sige_ceiling k1 t g (ref-e) (by norm_num [k1]) ht.1 ht.2 hg.2 (by linarith [he.1])
+  have j2b := sige_ceiling k2 t g (ref-e2) (by norm_num [k2]) ht.1 ht.2 hg.2 (by linarith [he2.1])
+  have jcb := sige_ceiling k2 t g (ref-vc) (by norm_num [k2]) ht.1 ht.2 hg.2 (by linarith [hvc.1])
+  change j ≤ _ at jb
+  change j2 ≤ _ at j2b
+  change jc ≤ _ at jcb
+  have hstart := startup_floor t (vs-ref) ht.1 ht.2 (by linarith)
+  simp only [sigeJunction,sub_zero] at hstart
+  rw [← hdi] at hstart
+  have hpm : mp ≤ 0 := by
+    have er : hfwdR ≤ f := Real.exp_le_exp.mp (by
+      rw [hr,hf]
+      apply add_le_add_right
+      apply Real.exp_le_exp.mpr
+      apply div_le_div_of_nonneg_right _ (by positivity)
+      linarith [hvd.1])
+    nlinarith [mul_self_le_mul_self hr0 er]
+  simp only [sub_self,zero_div,Real.exp_zero,sub_zero,mul_zero,add_zero] at hic hib hsk
+  change ic = j/sk*(1+(ref-e)/45) at hic
+  change ib = j/380 at hib
+  change ib2 = j2/380 + jc/8 at hib2
+  have hic' : ic ≤ 2*(k1*1400000000) := by
+    have hp : 0 ≤ 1+(ref-e)/45 := by linarith [href.1,he.2]
+    rcases le_total j 0 with hj | hj
+    · have hi := mul_nonpos_of_nonpos_of_nonneg (div_nonpos_of_nonpos_of_nonneg hj hsk0) hp
+      rw [hic]; exact hi.trans (by norm_num [k1])
+    · have hs1 : 1 ≤ sk := by
+        have hle : 1 ≤ sk*sk := by
+          rw [hsk]
+          change 1 ≤ 1 + j*j/(9/62500)
+          linarith [mul_self_nonneg j]
+        nlinarith
+      have hj' : j/sk ≤ k1*1400000000 := (div_le_iff₀ (by linarith)).2
+        (jb.trans (le_mul_of_one_le_right (by norm_num [k1]) hs1))
+      rw [hic]
+      exact (mul_le_mul hj' (by linarith [he.1] : 1+(ref-e)/45 ≤ 2) hp (by norm_num [k1])).trans_eq (mul_comm ..)
+  dsimp [k1,k2] at hic' jb j2b jcb
+  linarith only [hstart,hpm,hic',hib,hib2,jb,j2b,jcb,kcl,unsafeRef]
+
+/-- A damaged pull-down fin admits a 20-step trajectory violating the read margin at 120 ps. -/
+theorem bench03b_asap7_sram_fin_collapse_proved : Bench_03b_asap7_sram_6t_fin_collapse_sat realTF :=
+  SramTrajectory.collapse_of_faces SramTrajectory.checkedFaces
 
 end SpiceSmtBench.Targets

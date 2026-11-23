@@ -1,6 +1,8 @@
 //! Rigorous outward-rounded interval evaluator and branch-and-bound sub-box paving
 //! certificate verifier (`spice2smt verify-paving <deck.sp> <paving.json>`).
 
+pub mod lean;
+
 use std::collections::BTreeMap;
 
 use crate::ast::{CmpOp, Expr, Formula};

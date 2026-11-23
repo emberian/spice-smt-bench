@@ -4,8 +4,7 @@ import Init.Data.Rat.Lemmas
 # Transcendental Circuit, Multi-PDK Transistor, PCB EM & TCAD Physics Models
 
 Defines the self-contained algebraic/analytic carrier structure `TranscendentalField R`
-used across all 19 target specifications. Results are conditional on this
-interface; this library does not construct a concrete real-exponential instance.
+used across all 19 target specifications. The real-exponential instance is constructed in `SpiceSmtBench.RealPhysics`.
 -/
 
 namespace SpiceSmtBench

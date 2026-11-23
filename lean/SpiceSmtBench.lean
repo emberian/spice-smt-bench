@@ -1,4 +1,4 @@
 import SpiceSmtBench.PhysicsModels
-import SpiceSmtBench.IntervalCheck
+import SpiceSmtBench.PavingFormula
 import SpiceSmtBench.TargetsGenerated
 import SpiceSmtBench.Targets

@@ -6,17 +6,21 @@
 
 1. **Pure-`exp` SMT-LIB (`--dialect smt2-exp`)** — uses `ALL` by default, with an explicit `--logic` override. Transients use discrete Backward-Euler or Trapezoidal collocation and test unsafe states at every sample, including time zero. These samples do not establish continuous-time safety.
 2. **Native Continuous-Time ODE SMT2 (`--dialect dreal-ode`)** — `(define-ode flow_1 ...)` + `(forall_t ...)` trajectory reachability queries over explicit nonlinear state-space flows $\dot{x} = C(x)^{-1}(Bu(t) - Gx - i_{\text{nl}}(x))$, including symbolically differentiated drive waveforms, depletion Miller $C_{gd}(v_{dg})$, and MLCC DC-bias derating $C(v)$.
-3. **Lean 4 target specifications (`--dialect lean4` or `emit-lean`)** — all 19 propositions are conditional on a supplied `TranscendentalField`. Benchmark 01 has both a direct proof and a concrete rational interval certificate replay through `checkConcreteLeaf_sound` and `paving_unsat_sound`. Benchmarks 06 and 09a also have generated-target proofs. The Rust JSON certificate and Lean certificates use separate checked representations.
+3. **Lean 4 target specifications (`--dialect lean4` or `emit-lean`)** — all 19 generated propositions have a concrete interpretation over `ℝ`. Nine have complete proofs: the diode clipper (01), FinFET inverter (02), nominal and damaged SRAM (03a, 03b), guarded SiGe bandgap (04b), CMOS latchup (05), RC glitch filter (06), and both PCB microstrips (09a, 09b).
 
 Numeric literals in both emitters denote the exact shortest-roundtrip decimal rational selected by `src/numeral.rs` from the stamped binary64 AST. Decimal input parsing and constant folding still use binary64 arithmetic. The Rust interval checker encloses exponentials using outward-rounded Taylor arithmetic and repeated squaring; it does not rely on platform transcendental accuracy. Native ODE output uses `QF_NRA_ODE`; DC input to that dialect is algebraic output under `ALL`.
 
-Generate and replay the diode certificate with:
+After building the Lean workspace, export and replay a certificate from the repository root:
 
 ```sh
-./target/release/spice2smt generate-paving benchmarks/sp/01_diode_clipper_pvt.sp v_out=0.84 i_D1=0.005 -o examples/diode_clipper_paving.json
-./target/release/spice2smt verify-paving benchmarks/sp/01_diode_clipper_pvt.sp examples/diode_clipper_paving.json
+cargo run -- generate-paving benchmarks/sp/01_diode_clipper_pvt.sp v_out=0.84 i_D1=0.005 -o /tmp/Diode.lean
+cargo run -- emit-witness benchmarks/sp/03b_asap7_sram_6t_fin_collapse_sat.sp -o /tmp/Collapse.lean
+(cd lean && lake env lean /tmp/Diode.lean && lake env lean /tmp/Collapse.lean)
 ```
 
+An existing JSON tree can be exported with `verify-paving DECK TREE.json -o TREE.lean`. Each Lean split carries its indexed variable and exact binary64 dyadic. The stamped model constants keep their decimal rational semantics. Lean checks the leaf reason on each sub-box and proves the stamped real proposition.
+
+`emit-witness DECK name=num/den ... -o Witness.lean` accepts exact rational assignments to the parameters and solver variables of algebraic SAT decks. Omitting assignments selects the checked witnesses for 03b and 09b. For an alternative 03b trajectory at the certified damaged-fin corner, pass `--sram-boxes boxes.txt k` before `-o`. Supply 21 rows of four rational voltages (`q.lo q.hi qb.lo qb.hi`) and the zero-based failure sample `k`. The checker proves a simultaneous root of the two backward-Euler residuals at each step. The bundled witness crosses the read threshold by sample 12.
 
 ---
 
@@ -118,11 +122,12 @@ cvc5 /tmp/01_nrat.smt2
 
 ### 3. Build the Companion Lean 4 Proof Workspace (`lean/`)
 
-`lean/` requires **only** Lean `v4.35.0` (zero `Mathlib` download or cache needed):
+The workspace pins Lean 4.35, Mathlib, LeanCert rational Taylor bounds, and Brouwer’s fixed-point theorem in its Lake manifest.
 
 ```bash
 cd lean
-lake build   # Typecheck generated targets and conditional proofs
+lake exe cache get
+lake build
 ```
 
 Key Lean 4 modules:
@@ -130,7 +135,8 @@ Key Lean 4 modules:
 - [`lean/SpiceSmtBench/PhysicsModels.lean`](lean/SpiceSmtBench/PhysicsModels.lean): `TranscendentalField R`, Shockley diode laws, pure-`exp` EKV softplus witness equivalence (`ekv_softplus_witness_nonneg`), GAA non-self-cooling theorem (`gaa_self_heating_ge_ambient`), cancellation-free Scharfetter–Gummel Bernoulli identity (`sg_cancellation_free_identity`), plus solver-synthesis Taylor targets `ExpHalfTaylor12Target` and `BernSmallTaylor10Target`.
 - [`lean/SpiceSmtBench/IntervalCheck.lean`](lean/SpiceSmtBench/IntervalCheck.lean): Exact arbitrary-precision `QRat` / `QInterval` arithmetic, scaling-and-squaring `exp_ge_qrat_iterSq`, signed multiplication, positive-denominator division, rational exponential enclosures, symbolic `PExpr` evaluation, `checkConcreteLeaf_sound`, and verified branch-and-bound replay (`paving_unsat_sound`).
 - [`lean/SpiceSmtBench/TargetsGenerated.lean`](lean/SpiceSmtBench/TargetsGenerated.lean): All 19 auto-generated benchmark `Prop` targets (`Bench_01_diode_clipper_pvt` through `Bench_14b_gt2n_gaa_nanosheet_thermal_runaway_sat`).
-- [`lean/SpiceSmtBench/Targets.lean`](lean/SpiceSmtBench/Targets.lean): Full kernel-checked `UNSAT` proof `bench01_diode_clipper_pvt_proved` of Benchmark 01 across its continuous 2D PVT box, plus `bench01_paving_certificate_proved`, `bench06_rc_diode_glitch_filter_proved`, `bench09a_pcb_microstrip_dfm_proved`, and the component lemmas `unguarded_bandgap_zero_current_trojan` and `guarded_bandgap_startup_refutes_zero_current`. The bandgap component lemmas do not prove the generated bandgap targets.
+- [`RealPhysics.lean`](lean/SpiceSmtBench/RealPhysics.lean) constructs `realTF` with Mathlib, proves rational bounds on `Real.exp`, and proves the rational doubling obstruction.
+- [`Targets.lean`](lean/SpiceSmtBench/Targets.lean) collects the certified benchmark propositions. [`SramCertificate.lean`](lean/SpiceSmtBench/SramCertificate.lean) checks the nominal SRAM barrier. [`SramTrajectory.lean`](lean/SpiceSmtBench/SramTrajectory.lean) connects the damaged-fin interval witness to the same stamped transistor currents.
 
 ---
 
@@ -149,7 +155,7 @@ spice-smt-bench/
 │   ├── numeral.rs              # Shortest-roundtrip decimal rational conversion
 │   ├── paving.rs               # IEEE-754 outward-ULP interval evaluator & paving tree verifier
 │   ├── lib.rs                  # Library entrypoints
-│   └── main.rs                 # CLI (`compile`, `batch`, `emit-lean`, `generate-paving`, `verify-paving`, `list-pdks`)
+│   └── main.rs                 # CLI (`compile`, `batch`, `emit-lean`, `generate-paving`, `verify-paving`, `emit-witness`, `list-pdks`)
 ├── benchmarks/
 │   ├── sp/                     # 19 graded multi-PDK / PCB / TCAD `.sp` benchmark decks
 │   └── smt2/
@@ -157,7 +163,7 @@ spice-smt-bench/
 │       └── dreal-ode/          # 19 native continuous-ODE `dReal` files (`define-ode` + `forall_t`)
 ├── examples/
 │   └── diode_clipper_paving.json  # Verified 3-leaf UNSAT paving certificate for Benchmark 01
-├── lean/                       # Dependency-free Lean 4.35 verification workspace
+├── lean/                       # Lean 4.35 verification workspace
 ├── docs/
 │   ├── DESIGN_SPACE.md         # Architectural rationale, anti-sweep verification & solver-to-Lean paths
 │   └── PCB_AND_TCAD_MODELS.md  # Full equations for all 6 PDKs, PCB multiphysics & SG TCAD

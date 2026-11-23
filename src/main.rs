@@ -15,8 +15,10 @@ USAGE:
   spice2smt [compile] <deck.sp> [--dialect smt2-exp|dreal-ode|lean4] [--pdk <profile>] [--logic <QF_NRA|QF_NRAT|ALL>] [--name <Def>] [-o <out>]
   spice2smt batch <sp_dir> [--out-smt2-exp <dir>] [--out-dreal-ode <dir>] [--out-lean <file.lean>] [--logic <LOGIC>]
   spice2smt emit-lean <deck.sp> [--name <Def>] [--pdk <profile>] [-o <out.lean>]
-  spice2smt generate-paving <deck.sp> <variable=mid>... -o <certificate.json>
-  spice2smt verify-paving <deck.sp> <paving.json>
+  spice2smt generate-paving <deck.sp> <variable=mid>... -o <certificate.json|certificate.lean>
+  spice2smt emit-witness <deck.sp> <variable=num/den>... -o <witness.lean>
+  spice2smt emit-witness <03b.sp> --sram-boxes <samples.txt> <failure-step> -o <witness.lean>
+  spice2smt verify-paving <deck.sp> <paving.json> [-o <certificate.lean>]
   spice2smt list-pdks
 
 PDK PROFILES:
@@ -64,8 +66,8 @@ fn run() -> Result<(), String> {
             Ok(())
         }
         "generate-paving" => {
-            if args.len() < 5 || args[args.len() - 2] != "-o" {
-                return Err("usage: spice2smt generate-paving <deck.sp> <variable=mid>... -o <certificate.json>".to_string());
+            if args.len() < 4 || args[args.len() - 2] != "-o" {
+                return Err("usage: spice2smt generate-paving <deck.sp> <variable=mid>... -o <certificate.json|certificate.lean>".to_string());
             }
             let source = fs::read_to_string(&args[1]).map_err(|e| e.to_string())?;
             let system = stamp::stamp_deck(&parser::parse_deck(&source)?)?;
@@ -75,12 +77,39 @@ fn run() -> Result<(), String> {
                 splits.push((variable.to_string(), parser::parse_spice_number(midpoint)?));
             }
             let certificate = paving::generate_paving(&system, &splits)?;
-            fs::write(&args[args.len() - 1], format!("{}\n", certificate.to_json())).map_err(|e| e.to_string())?;
+            let path = &args[args.len()-1];
+            let output = if path.ends_with(".lean") { paving::lean::emit_paving(&system, &certificate)? }
+                else { format!("{}\n", certificate.to_json()) };
+            fs::write(path, output).map_err(|e| e.to_string())?;
             Ok(())
         }
+        "emit-witness" => {
+            if args.len() < 4 || args[args.len()-2] != "-o" {
+                return Err("usage: emit-witness <deck.sp> <variable=num/den>... -o <witness.lean>".into());
+            }
+            let source = fs::read_to_string(&args[1]).map_err(|e| e.to_string())?;
+            let sys = stamp::stamp_deck(&parser::parse_deck(&source)?)?;
+            if args.get(2).map(String::as_str) == Some("--sram-boxes") {
+                if args.len() != 7 {
+                    return Err("expected --sram-boxes <samples.txt> <failure-step> -o <witness.lean>".into());
+                }
+                let rows = fs::read_to_string(&args[3]).map_err(|e| e.to_string())?;
+                let failure = args[4].parse().map_err(|_| "expected integer failure step")?;
+                let certificate = paving::lean::emit_sram_boxes(&sys, &rows, failure)?;
+                return fs::write(&args[6], certificate).map_err(|e| e.to_string());
+            }
+            let mut values = std::collections::BTreeMap::new();
+            for binding in &args[2..args.len()-2] {
+                let (name, value) = binding.split_once('=').ok_or("expected variable=value")?;
+                if values.insert(name.to_owned(),value.to_owned()).is_some() {
+                    return Err(format!("duplicate witness for {name}"));
+                }
+            }
+            fs::write(&args[args.len()-1], paving::lean::emit_witness(&sys, &values)?).map_err(|e| e.to_string())
+        }
         "verify-paving" => {
-            if args.len() != 3 {
-                return Err("usage: spice2smt verify-paving <deck.sp> <paving.json>".to_string());
+            if args.len() != 3 && !(args.len() == 5 && args[3] == "-o") {
+                return Err("usage: spice2smt verify-paving <deck.sp> <paving.json> [-o <certificate.lean>]".to_string());
             }
             let sp_src = fs::read_to_string(&args[1])
                 .map_err(|e| format!("failed to read `{}`: {e}", args[1]))?;
@@ -89,6 +118,10 @@ fn run() -> Result<(), String> {
             let deck = parser::parse_deck(&sp_src)?;
             let sys = stamp::stamp_deck(&deck)?;
             let pav = paving::parse_paving_json(&json_src)?;
+            if args.len() == 5 {
+                let text = paving::lean::emit_paving(&sys, &pav)?;
+                return fs::write(&args[4], text).map_err(|e| e.to_string());
+            }
             let rep = paving::verify_paving(&sys, &pav)?;
             println!(
                 "VERIFIED UNSAT PAVING: total_leaves={} (unsafe_refuted={}, physics_refuted={}, max_depth={})",

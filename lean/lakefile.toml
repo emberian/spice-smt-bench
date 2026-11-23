@@ -4,3 +4,18 @@ defaultTargets = ["SpiceSmtBench"]
 
 [[lean_lib]]
 name = "SpiceSmtBench"
+
+[[require]]
+name = "mathlib"
+scope = "leanprover-community"
+rev = "v4.35.0"
+
+[[require]]
+name = "fixed-point-theorems"
+git = "https://github.com/harfe/fixed-point-theorems-lean4"
+rev = "93a3eed3364281a9dbf9652bb52356a8db65057c"
+
+[[require]]
+name = "LeanCert"
+git = "https://github.com/alerad/leancert"
+rev = "d3e7f686eb6bfdcbb987eeb931c0bab953e8f43e"

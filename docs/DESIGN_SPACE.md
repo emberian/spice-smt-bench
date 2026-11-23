@@ -69,7 +69,7 @@ Transcendental SMT solvers perform dramatically better when queries use a **mini
 For 10–100+ variable DC/PCB/TCAD benchmarks, the solver exports its branch-and-bound search tree as a `PavingTree` (`examples/diode_clipper_paving.json` in JSON, or `IntervalCheck.PavingTree` in Lean 4):
 - Internal nodes bisect a variable interval $[lo, hi]$ at an exact rational midpoint `mid` (`splitBox_exhaustive`).
 - Each leaf carries a tag identifying either that `.unsafe` evaluates strictly to `false` on the sub-box (`unsafe_false`) or that a specific KCL / constitutive residual interval excludes `0` (`constraint_violated`).
-- `spice2smt generate-paving` produces a JSON certificate and `verify-paving` checks its outward-rounded interval enclosures. In Lean, `PExpr`, `PCmp`, and `checkConcreteLeaf` implement a concrete rational checker with `checkConcreteLeaf_sound`. `Targets.bench01_paving_certificate_proved` replays a concrete two-leaf `PavingTree` with kernel `decide`, alongside the direct `bench01_diode_clipper_pvt_proved`. The JSON and Lean certificates are separate representations; neither checker trusts the other.
+- `generate-paving` emits JSON or a Lean `PavingTree`. The Lean exporter gives each split an indexed variable and exact dyadic midpoint, and each leaf an index into the stamped constraints. Kernel reduction checks `verifyPaving` before `paving_unsat_sound` discharges the stamped real proposition. `verify-paving DECK PAVING.json -o Proof.lean` converts an archived tree.
 
 ### Path B: Direct Proof-Term Synthesis + Foundational Taylor Enclosures (`PhysicsModels.lean`)
 
@@ -92,9 +92,10 @@ The SCR stamp includes both BE and BC exponential junction currents, with revers
 beta 2 for both SCR devices. Benchmark 05 uses 20 Ω emitter ballast and tight
 well/substrate taps over a 0.70–0.88 V core supply and 273–398 K. Its full-box Rust
 interval proof has no supply-current bound; the 1.2 V, 150/120 Ω unguarded twin
-has a numerical latched witness. This Rust result is separate from Lean target
-proofs. Bandgap startup component lemmas likewise do not establish the entire
-generated bandgap proposition.
+has a numerical latched witness. The Lean proof also closes the full generated
+05 target by bounding junction currents and applying the resistor equations.
+For 04b the startup-diode lower bound exceeds the combined HBT and bleeder
+currents at a reference below 150 mV.
 
 `bench06_rc_diode_glitch_filter_proved` checks a rational barrier for every
 backward-Euler sample, establishing a 1 V upper bound beneath the 1.10 V unsafe
