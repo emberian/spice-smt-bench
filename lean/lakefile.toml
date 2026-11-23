@@ -1,6 +1,7 @@
 name = "SpiceSmtBench"
 version = "0.1.0"
 defaultTargets = ["SpiceSmtBench"]
+allowNonModules = true
 
 [[lean_lib]]
 name = "SpiceSmtBench"

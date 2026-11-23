@@ -51,7 +51,7 @@ private theorem reverse_weight {b z : ℝ} (eqn : b*(Real.exp z-1)=z) (atZero : 
     have upper : b ≤ 1 := hb ▸ (div_le_one (sub_pos.mpr hE)).2 (by linarith [Real.add_one_le_exp z])
     exact ⟨hb ▸ div_nonneg pos.le (sub_pos.mpr hE).le,
       (mul_le_mul_of_nonneg_right upper (Real.exp_pos _).le).trans
-        (by simpa using le_max_right 1 (Real.exp z))⟩
+        (by simp)⟩
 
 private noncomputable abbrev kb : ℝ := 4308666631/50000000000000
 private noncomputable abbrev activation (t : ℝ) := (6498530148177529/1000000000000)*

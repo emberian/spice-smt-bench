@@ -90,7 +90,7 @@ private theorem perturbed_step {s t : State} {r u w d : ℝ} (f : Step s t r u w
     rcases le_total 0 (m.b:ℝ) with hp | hn
     · exact (mul_le_mul_of_nonneg_left dhi hp).trans (by rw [mul_comm]; exact le_max_right ..)
     · apply (mul_le_mul_of_nonpos_left dlo hn).trans
-      convert le_max_left ((m.b:ℝ)/10) (6/5*m.b) using 1 <;> ring
+      convert le_max_left ((m.b:ℝ)/10) (6/5*m.b) using 1; ring
   have ml := (le_abs_self ((m.d:ℝ)*w)).trans_eq (abs_mul ..)
   have lead := mul_le_mul_of_nonneg_left wbox (abs_nonneg (m.d:ℝ))
   have er : |(r0-r)*u| ≤ 1/400 := by

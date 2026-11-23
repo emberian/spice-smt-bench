@@ -136,7 +136,7 @@ private theorem sg_flux {x : Fin 4 → ℝ} (i : Nat) (hi : 0 < ev x (dropV i))
   change 0 < p'-p at hi
   have hE : 1 < E := Real.one_lt_exp_iff.mpr (div_pos hi hv)
   have exp_id : E*Real.exp ((p-q)/v) = Real.exp ((p'-q)/v) := by
-    dsimp [E]; rw [← Real.exp_add] <;> ring
+    dsimp [E]; rw [← Real.exp_add]; congr 1; ring
   have w_id : Real.exp ((p'-q)/v) * (Real.exp ((p0-p)/v) - Real.exp ((p0-p')/v)) =
       Real.exp ((p0-q)/v)*(E-1) := by
     dsimp [E]; rw [mul_sub,mul_sub,← Real.exp_add,← Real.exp_add,← Real.exp_add,mul_one]
@@ -176,7 +176,7 @@ private theorem density_eq {x : Fin 4 → ℝ} (hx : ∀ i, x i ∈ mesh i) (i :
   · exact carrier_eq 2 (phi_range hx 1).2.2
   · exact carrier_eq 3 (phi_range hx 2).2.2
   · exact carrier_eq 4 (phi_range hx 3).2.2
-  · simp [density,quasi,carrier,z5,drainZ,← Real.exp_add] <;> ring
+  · simp [density,quasi,carrier,z5,drainZ,← Real.exp_add]; ring
 
 private noncomputable def edgeCurrent (x : Fin 4 → ℝ) (i : Nat) :=
   801088317/50000000000000000000000000000*(ev x ni*ev x mobility)*

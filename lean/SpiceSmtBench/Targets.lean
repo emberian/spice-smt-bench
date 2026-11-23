@@ -1,5 +1,6 @@
 import Mathlib.Analysis.Complex.ExponentialBounds
 import SpiceSmtBench.BandgapCertificate
+import SpiceSmtBench.SlotCertificate
 import SpiceSmtBench.RingCertificate
 import SpiceSmtBench.FinCertificate
 import SpiceSmtBench.GanCertificate
@@ -18,12 +19,12 @@ import SpiceSmtBench.PcbCertificate
 Re-exports all 19 auto-generated SPICE / Multi-PDK / PCB / TCAD benchmark `Prop` definitions
 from `SpiceSmtBench.TargetsGenerated` and provides complete end-to-end machine-checked proofs:
 
-Sixteen of the nineteen generated targets have end-to-end proofs over `ℝ` via `realTF`.
+Seventeen of the nineteen generated targets have end-to-end proofs over `ℝ` via `realTF`.
 
 | Generated query | Proved over ℝ | Open |
 | --- | --- | --- |
 | UNSAT safety | 01, 02, 03a, 04b, 05, 06, 07, 08, 09a, 11, 13, 14a | 10, 12b |
-| SAT violation | 03b, 04a, 09b, 14b | 12a |
+| SAT violation | 03b, 04a, 09b, 12a, 14b | — |
 
 Transient targets quantify over the integration samples in the generated stamps.
 -/
@@ -900,5 +901,9 @@ theorem bench08_ring_envelope_proved : Bench_08_gt2n_gaa_ring_oscillator_3stage_
 /-- The wrapped 5 × 3 FinFET stays within 10 pA/µm over its full process box. -/
 theorem bench13_finfet_leakage_proved : Bench_13_asap7_finfet_2d_poisson_qconfinement realTF :=
   FinCertificate.certified
+
+/-- The split-plane trajectory crosses the 25 mV receiver ground-bounce threshold. -/
+theorem bench12a_split_plane_bounce_proved : Bench_12a_pcb_split_plane_slot_emi_sat realTF :=
+  SlotLine.certified
 
 end SpiceSmtBench.Targets

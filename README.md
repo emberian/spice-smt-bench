@@ -6,7 +6,7 @@
 
 1. **Pure-`exp` SMT-LIB (`--dialect smt2-exp`)** — uses `ALL` by default, with an explicit `--logic` override. Transients use discrete Backward-Euler or Trapezoidal collocation and test unsafe states at every sample, including time zero. These samples do not establish continuous-time safety.
 2. **Native Continuous-Time ODE SMT2 (`--dialect dreal-ode`)** — `(define-ode flow_1 ...)` + `(forall_t ...)` trajectory reachability queries over explicit nonlinear state-space flows $\dot{x} = C(x)^{-1}(Bu(t) - Gx - i_{\text{nl}}(x))$, including symbolically differentiated drive waveforms, depletion Miller $C_{gd}(v_{dg})$, and MLCC DC-bias derating $C(v)$.
-3. **Lean 4 target specifications (`--dialect lean4` or `emit-lean`)** — all 19 generated propositions have a concrete interpretation over `ℝ`. **16/19 have end-to-end proofs over `ℝ`**. These include both SiGe bandgap decks, the sampled GaN half-bridge and PCB supply-droop envelopes, and both 2nm GAA electrothermal TCAD decks. The suite table records the proof status of each generated proposition.
+3. **Lean 4 target specifications (`--dialect lean4` or `emit-lean`)** — all 19 generated propositions have a concrete interpretation over `ℝ`. **17/19 have end-to-end proofs over `ℝ`**. These include both SiGe bandgap decks, the sampled GaN half-bridge and PCB supply-droop envelopes, and both 2nm GAA electrothermal TCAD decks. The suite table records the proof status of each generated proposition.
 
 Numeric literals in both emitters denote the exact shortest-roundtrip decimal rational selected by `src/numeral.rs` from the stamped binary64 AST. Decimal input parsing and constant folding still use binary64 arithmetic. The Rust interval checker encloses exponentials using outward-rounded Taylor arithmetic and repeated squaring; it does not rely on platform transcendental accuracy. Native ODE output uses `QF_NRA_ODE`; DC input to that dialect is algebraic output under `ALL`.
 
@@ -63,7 +63,7 @@ See [`docs/DESIGN_SPACE.md`](docs/DESIGN_SPACE.md) and [`docs/PCB_AND_TCAD_MODEL
 
 ## Graded 19-Benchmark Suite (`benchmarks/sp/` & `benchmarks/smt2/`)
 
-Every unsafe threshold and manufacturing tolerance box is verified non-vacuous in `tests/integration.rs`: all 14 `UNSAT` safety benchmarks have inhabited physical equilibria/trajectories inside their variable boxes, and all 5 `SAT` defect/Trojan twins (`03b`, `04a`, `09b`, `12a`, `14b`) have concrete numerical counterexample witnesses.
+The Rust integration tests simulate all 19 stamped decks. They check a numerical operating point or sampled trajectory for each of the 14 safety decks, and reproduce a threshold violation for each of the five fault decks (`03b`, `04a`, `09b`, `12a`, `14b`). The Lean column below records which generated propositions have kernel-checked proofs over the reals.
 
 | ID | Suite | Deck (`benchmarks/sp/*.sp`) | PDK / Domain | Mode | Expected | Lean over ℝ | Physical Property / Failure Mode |
 | :--- | :---: | :--- | :--- | :---: | :---: | :---: | :--- |
@@ -81,7 +81,7 @@ Every unsafe threshold and manufacturing tolerance box is verified non-vacuous i
 | `09b` | C | `09b_pcb_microstrip_overetch_sat.sp` | PCB EM | DC | **`sat`** | Proved | Over-etched copper + thick prepreg defect corner violates $Z_0 > 56\,\Omega$ impedance envelope |
 | `10` | C | `10_pcb_coupled_trace_esd_crosstalk_ode.sp` | `gf180mcu` + PCB | ODE | `unsat` | Open | Coupled differential trace + fiber-weave skew + via stub + receiver ESD clamp crosstalk limit |
 | `11` | C | `11_pcb_pdn_mlcc_derating_droop_ode.sp` | PCB PDN | ODE | `unsat` | Proved | Voltage-derated Class-II MLCC $C(v)$ + BGA solder-void $R_{\text{void}}$ transient PDN droop envelope |
-| `12a` | C | `12a_pcb_split_plane_slot_emi_sat.sp` | PCB signal integrity | ODE | **`sat`** | Open | Split return-plane slot inductance $L_{\text{slot}}$ + fiber-weave skew induces $> 0.025\text{ V}$ ground bounce |
+| `12a` | C | `12a_pcb_split_plane_slot_emi_sat.sp` | PCB signal integrity | ODE | **`sat`** | Proved | Split return-plane slot inductance $L_{\text{slot}}$ + fiber-weave skew induces $> 0.025\text{ V}$ ground bounce |
 | `12b` | C | `12b_pcb_stitched_return_fence_unsat.sp` | PCB signal integrity | ODE | `unsat` | Open | Stitched return-via fence keeps sampled receiver ground bounce within ±25 mV across the weave-skew box; no radiated-EMI claim |
 | `13` | D | `13_asap7_finfet_2d_poisson_qconfinement.sp` | `asap7` 2D TCAD | DC | `unsat` | Proved | 7nm $5\times 3$ 2D cross-section FinFET Poisson + quantum confinement + SG off-state DIBL leakage limit of 10 pA/µm |
 | `14a` | D | `14a_gt2n_gaa_nanosheet_electrothermal_unsat.sp` | `gt2n` TCAD | DC | `unsat` | Proved | 2nm 3-sheet GAA nanosheet coupled electro-thermal fixed point stays $\le 410\text{ K}$ over nominal $R_{\text{th}}$ |
