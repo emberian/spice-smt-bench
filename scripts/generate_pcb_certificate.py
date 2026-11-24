@@ -114,7 +114,7 @@ text += [']',f'def pcbRoot : List QInterval := {ivlist(root)}',
          f'def pcbRanges : List (Nat × QInterval) := [({indices["Z0_tl50"]}, {iv((Q(45),Q(55)))}), ({indices["Zdiff_diff90"]}, {iv((Q(90),Q(110)))})]',
          'def pcbCertificates : List (List QInterval) := [']
 text.append(',\n'.join('  '+ivlist(c) for c in certs)); text += [']', f'def pcbTree : PavingTree := {tree}',
-    'set_option maxRecDepth 20000 in', 'set_option maxHeartbeats 10000000 in',
+    'set_option maxRecDepth 20000 in',
     'theorem pcbReplay : verifyPaving (checkForwardLeaf 5 pcbDefinitions pcbRanges pcbCertificates) pcbTree pcbRoot = true := by decide',
     '', 'end SpiceSmtBench.Targets', '']
 (ROOT/'lean/SpiceSmtBench/PcbCertificate.lean').write_text('\n'.join(text))

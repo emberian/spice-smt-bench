@@ -58,7 +58,6 @@ private def mesh : Box 4 := ![
   band 0.65871232031739 0.00000000407, band 0.81386273159884 0.00000000177]
 
 set_option maxRecDepth 32000
-set_option maxHeartbeats 6000000
 private theorem domain : ∀ i, checkDomain mesh (rows i) := by decide +kernel
 private theorem faces : ∀ i h, checkFace mesh (rows i) i h := by decide +kernel
 
@@ -213,6 +212,7 @@ local macro "stamp " h:term : tactic => `(tactic|
    norm_num [realTF, vt, qm, thick, ni, mobility, dos, psi, quasi, density, edgeCurrent,
      delta, dropV, edgeExp, upperB, lowerB] at fact ⊢ <;> exact fact))
 
+set_option maxHeartbeats 220000 in
 theorem certified : Targets.Bench_14b_gt2n_gaa_nanosheet_thermal_runaway_sat realTF := by
   obtain ⟨x,hx,zero⟩ := checked_root mesh rows domain faces
   have ab : 355 ≤ ev x ambient ∧ ev x ambient ≤ 385 := by

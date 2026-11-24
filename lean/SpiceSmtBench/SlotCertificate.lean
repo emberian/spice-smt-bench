@@ -6,7 +6,6 @@ open LinearTransient Enclosed
 noncomputable section
 
 set_option maxRecDepth 30000
-set_option maxHeartbeats 8000000
 
 private def extended (x : Nat → Fin 16 → ℝ) (k i : Nat) := x k (Fin.ofNat 16 i)
 

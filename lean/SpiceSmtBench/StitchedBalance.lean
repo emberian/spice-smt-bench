@@ -4,7 +4,6 @@ import SpiceSmtBench.StitchedResidual
 namespace SpiceSmtBench.Stitched
 open LineBounds Enclosed StoredEnergy PolynomialEnvelope TransientWindows
 noncomputable section
-set_option maxHeartbeats 500000
 set_option maxRecDepth 16000
 
 def approximation (p : Components) (k : Nat) : State 16 := fun i =>

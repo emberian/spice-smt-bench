@@ -3,7 +3,6 @@ import SpiceSmtBench.StitchedStamp
 namespace SpiceSmtBench.Stitched
 open Microstrip LineBounds Enclosed LeanCert.Core
 noncomputable section
-set_option maxHeartbeats 5000000
 set_option maxRecDepth 20000
 def substrate : Geometry := ⟨fraction 1 6250,fraction 6666666666666667 500000000000000000,fraction 203 625,(270134453/100000000),(270134455/100000000)⟩
 def epBox := box (22/5) (47/10) (by decide +kernel)

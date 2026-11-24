@@ -66,7 +66,6 @@ private def center (i : Fin 54) : ℚ := (5+2*(i.val:ℚ))/4000
 private def core : Coeff := ⟨0,1,0,0⟩
 
 set_option maxRecDepth 32000 in
-set_option maxHeartbeats 6000000 in
 private theorem replay : ∀ j : Fin 54, check (center j) 16 core 0 := by decide +kernel
 
 private theorem perturbed_step {s t : State} {r u w d : ℝ} (f : Step s t r u w d)

@@ -40,9 +40,8 @@ private def rows : Fin 7 → PExpr := ![(.sub (.add (.add (.add (.add p13 p17) p
   (.sub (.mul p8 p8) (.add (.const ⟨1, 1, by decide⟩) (.div (.mul (.mul (.mul (.const ⟨1, 39062500000000000, by decide⟩) (.mul (.mul (.mul (.div p1 (.const ⟨300, 1, by decide⟩)) (.div p1 (.const ⟨300, 1, by decide⟩))) (.div p1 (.const ⟨300, 1, by decide⟩))) (.exp (.sub (.const ⟨270772089507397, 6250000000000, by decide⟩) (.div (.sub (.const ⟨28, 25, by decide⟩) p2) (.mul (.const ⟨4308666631, 50000000000000, by decide⟩) p1)))))) (.sub (.exp (.div (.sub p3 p6) (.mul (.const ⟨4308666631, 50000000000000, by decide⟩) p1))) (.const ⟨1, 1, by decide⟩))) (.mul (.mul (.const ⟨1, 39062500000000000, by decide⟩) (.mul (.mul (.mul (.div p1 (.const ⟨300, 1, by decide⟩)) (.div p1 (.const ⟨300, 1, by decide⟩))) (.div p1 (.const ⟨300, 1, by decide⟩))) (.exp (.sub (.const ⟨270772089507397, 6250000000000, by decide⟩) (.div (.sub (.const ⟨28, 25, by decide⟩) p2) (.mul (.const ⟨4308666631, 50000000000000, by decide⟩) p1)))))) (.sub (.exp (.div (.sub p3 p6) (.mul (.const ⟨4308666631, 50000000000000, by decide⟩) p1))) (.const ⟨1, 1, by decide⟩)))) (.const ⟨144, 15625, by decide⟩)))),
   (.sub (.sub (.sub p9 p13) p16) (.const ⟨0, 1, by decide⟩))]
 
-set_option maxRecDepth 32000
-set_option maxHeartbeats 10000000
-
+set_option maxRecDepth 32000 in
+set_option maxHeartbeats 300000 in
 theorem certified : Targets.Bench_04a_ihp_sige_bandgap_trojan_sat realTF := by
   obtain ⟨x,hx,hr⟩ := checked_root rootBox rows (by decide +kernel) (by decide +kernel)
   refine ⟨p0.eval realTF (values x), p1.eval realTF (values x), p2.eval realTF (values x), p10.eval realTF (values x), p9.eval realTF (values x), p3.eval realTF (values x), p4.eval realTF (values x), p11.eval realTF (values x), p12.eval realTF (values x), p13.eval realTF (values x), p14.eval realTF (values x), p15.eval realTF (values x), p16.eval realTF (values x), p5.eval realTF (values x), p7.eval realTF (values x), p17.eval realTF (values x), p18.eval realTF (values x), p6.eval realTF (values x), p8.eval realTF (values x), p19.eval realTF (values x), p20.eval realTF (values x), ?_⟩

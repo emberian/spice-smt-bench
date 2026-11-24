@@ -5,7 +5,6 @@ import SpiceSmtBench.SlotReplay
 namespace SpiceSmtBench.Stitched
 open TransientWindows PolynomialEnvelope StoredEnergy
 set_option maxRecDepth 30000
-set_option maxHeartbeats 4000000
 noncomputable section
 private theorem zero_ok : holds zeroW 0 := by simp [holds,zeroW]
 private theorem neg_ok {b x} (h : holds b x) : holds (negW b) (-x) := by

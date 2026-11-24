@@ -5,7 +5,6 @@ import Mathlib.Data.List.GetD
 namespace SpiceSmtBench.Crosstalk
 open Enclosed LinearTransient StoredEnergy LineBounds LeanCert.Core
 noncomputable section
-set_option maxHeartbeats 5000000
 set_option maxRecDepth 16000
 
 def reference (k : Nat) : Fin 14 → Enclosed :=

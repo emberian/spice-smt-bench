@@ -3,7 +3,6 @@ import SpiceSmtBench.CrosstalkReplay
 namespace SpiceSmtBench.Crosstalk
 open Enclosed LinearTransient StoredEnergy LineBounds LeanCert.Core
 noncomputable section
-set_option maxHeartbeats 5000000
 set_option maxRecDepth 16000
 private abbrev weight (i : Fin 14) := (weights i).val
 private theorem weight_pos : ∀ i, 0 < weight i := by intro i; fin_cases i <;> norm_num [weight,weights]
@@ -12,6 +11,7 @@ private def nominal (k : Nat) : State 14 := fun i => (reference k i).val
 private theorem symmetric (p : Line) (i j : Fin 14) : metric p i j = metric p j i := by
   exact congrArg ((10:ℝ)^12 * ·) (mass_symmetric p i j)
 
+set_option maxHeartbeats 260000 in
 private theorem lossless (p : Line) (hp : 0 ≤ p.r) (x : State 14) :
     work x (action (network p) x) ≤ 0 := by
   apply passive

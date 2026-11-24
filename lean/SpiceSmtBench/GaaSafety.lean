@@ -86,7 +86,6 @@ private theorem emission {t e : ℝ} (hot : 410 < t) (hq : 3/100 ≤ e) :
     exact (expMajor 22 (by simpa using bound)).trans (by norm_num)
 
 set_option maxRecDepth 32000 in
-set_option maxHeartbeats 1600000 in
 theorem certified : Targets.Bench_14a_gt2n_gaa_nanosheet_electrothermal_unsat realTF := by
   intro tn dl amb r t root p f1 q f2 u f3 v f4 e0 b0 e1 b1 e2 b2 e3 b3 e4 b4 cur box phys hot
   simp only [and_assoc] at phys

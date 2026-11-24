@@ -69,7 +69,7 @@ private theorem center_row {a u v top d : ℝ} (hd : 0 < d)
   linarith only [this]
 
 set_option maxRecDepth 32000 in
-set_option maxHeartbeats 4000000 in
+set_option maxHeartbeats 280000 in
 theorem certified : Targets.Bench_13_asap7_finfet_2d_poisson_qconfinement realTF := by
   intro dt dl metal t root p10 p11 p12 p20 p21 p22 p30 p31 p32 f1 f2 f3
     e00 b00 e01 b01 e02 b02 e10 b10 e11 b11 e12 b12 e20 b20 e21 b21 e22 b22 e30 b30 e31 b31 e32 b32 current mid box phys fail

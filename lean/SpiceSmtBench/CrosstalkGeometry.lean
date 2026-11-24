@@ -3,7 +3,6 @@ import SpiceSmtBench.CrosstalkReplay
 namespace SpiceSmtBench.Crosstalk
 open Microstrip LineBounds Enclosed LeanCert.Core
 noncomputable section
-set_option maxHeartbeats 5000000
 set_option maxRecDepth 20000
 def substrate : Geometry := ⟨fraction 7 40000,fraction 3 200,fraction 7104999999999999 20000000000000000,(261490726/100000000),(261490728/100000000)⟩
 def epBox := box (87/20) (93/20) (by decide +kernel)

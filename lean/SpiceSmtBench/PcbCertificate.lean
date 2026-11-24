@@ -45,7 +45,6 @@ def pcbCertificates : List (List QInterval) := [
 ]
 def pcbTree : PavingTree := (.split 0 ⟨-1, 500000, by decide⟩ (.leaf 0) (.split 1 ⟨1, 500000, by decide⟩ (.split 2 ⟨0, 1, by decide⟩ (.split 3 ⟨7, 200000, by decide⟩ (.leaf 1) (.split 4 ⟨17, 4, by decide⟩ (.leaf 2) (.split 0 ⟨1, 1000000, by decide⟩ (.leaf 3) (.split 1 ⟨-1, 1000000, by decide⟩ (.split 2 ⟨-1, 400000, by decide⟩ (.leaf 4) (.leaf 5)) (.split 2 ⟨-1, 400000, by decide⟩ (.leaf 6) (.leaf 7)))))) (.leaf 8)) (.split 2 ⟨0, 1, by decide⟩ (.split 3 ⟨7, 200000, by decide⟩ (.leaf 9) (.leaf 10)) (.leaf 11))))
 set_option maxRecDepth 20000 in
-set_option maxHeartbeats 10000000 in
 theorem pcbReplay : verifyPaving (checkForwardLeaf 5 pcbDefinitions pcbRanges pcbCertificates) pcbTree pcbRoot = true := by decide
 
 end SpiceSmtBench.Targets

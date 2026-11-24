@@ -202,7 +202,6 @@ private theorem admissible (k : Fin 21) :
     (-1/20 : ℚ) ≤ (sample k).b.lo ∧ (sample k).b.hi ≤ 4/5 := by
   revert k; decide +kernel
 
-set_option maxHeartbeats 3200000 in
 theorem collapse_of_boxes (sample : Nat → Sample)
     (initial : (sample 0).q.lo ≤ 7/10 ∧ 7/10 ≤ (sample 0).q.hi ∧
                (sample 0).b.lo ≤ 0 ∧ 0 ≤ (sample 0).b.hi)

@@ -6,10 +6,11 @@ namespace SpiceSmtBench.SramTrajectory
 -- kernel reductions release the Taylor arithmetic for earlier steps.
 set_option Elab.async false
 set_option maxRecDepth 32000
-set_option maxHeartbeats 10000000
 
 private abbrev Row (k : Nat) := ∀ s h : Bool, faceCheck k s h = true
 
+section
+set_option maxHeartbeats 280000
 private theorem row0 : Row 0 := by decide +kernel
 private theorem row1 : Row 1 := by decide +kernel
 private theorem row2 : Row 2 := by decide +kernel
@@ -30,6 +31,7 @@ private theorem row16 : Row 16 := by decide +kernel
 private theorem row17 : Row 17 := by decide +kernel
 private theorem row18 : Row 18 := by decide +kernel
 private theorem row19 : Row 19 := by decide +kernel
+end
 
 theorem checkedFaces (k : Fin 20) : Row k := by
   fin_cases k

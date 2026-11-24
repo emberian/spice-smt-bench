@@ -6,7 +6,6 @@ open Enclosed LinearTransient
 noncomputable section
 
 set_option maxRecDepth 30000
-set_option maxHeartbeats 5000000
 
 private def oneV : Enclosed := ⟨1,some (.singleton 1),by rintro _ ⟨⟩; simpa using LeanCert.Core.IntervalRat.mem_singleton 1⟩
 private def zeroV : Enclosed := ⟨0,some (.singleton 0),by rintro _ ⟨⟩; simpa using LeanCert.Core.IntervalRat.mem_singleton 0⟩

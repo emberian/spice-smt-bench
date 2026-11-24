@@ -3,7 +3,6 @@ import SpiceSmtBench.StitchedBalance
 namespace SpiceSmtBench.Stitched
 open LineBounds Enclosed StoredEnergy PolynomialEnvelope TransientWindows
 noncomputable section
-set_option maxHeartbeats 800000
 set_option maxRecDepth 16000
 
 private abbrev weight (i : Fin 16) := (weights i).val
@@ -16,6 +15,7 @@ private theorem budget : ∑ i, allowance i / weight i ≤ 1/4000 := by
   norm_num [allowance,weight,limits,weights,scale,Fin.sum_univ_succ]
 private theorem symmetric (p : Line) (i j : Fin 16) : metric p i j=metric p j i :=
   congrArg ((10:ℝ)^12 * ·) (mass_symmetric p i j)
+set_option maxHeartbeats 420000 in
 private theorem lossless (p : Line) (hr : 0 ≤ p.r) (x : State 16) : work x (action (network p) x) ≤ 0 := by
   apply passive
   · intro i; fin_cases i <;> norm_num [network] <;> linarith

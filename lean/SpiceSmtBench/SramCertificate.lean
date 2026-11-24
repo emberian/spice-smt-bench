@@ -154,7 +154,6 @@ private def tree : PavingTree :=
     (.split 0 ⟨309, 400, by decide⟩ (.leaf 2) (.leaf 2)) (.leaf 2))) (.leaf 2))) (.leaf 2)) (.leaf 2))))
 
 set_option maxRecDepth 16000 in
-set_option maxHeartbeats 2000000 in
 private theorem checked (lowQ : Bool) :
     verifyPaving (checkConcreteLeaf (constraints lowQ)) tree rootBox = true := by
   cases lowQ <;> decide +kernel

@@ -220,7 +220,6 @@ private def diodeBox : List QInterval :=
 private def diodeTree : PavingTree := .split 2 ⟨17, 20, by decide⟩ (.leaf 0) (.leaf 1)
 
 set_option maxRecDepth 10000 in
-set_option maxHeartbeats 2000000 in
 private theorem diodeReplay : verifyPaving (checkConcreteLeaf diodeConstraints) diodeTree diodeBox = true := by
   decide
 
@@ -288,7 +287,6 @@ private def filterStepBox : List QInterval :=
    ⟨QRat.zero, ⟨3,5000000000,by decide⟩⟩]
 
 set_option maxRecDepth 10000 in
-set_option maxHeartbeats 2000000 in
 private theorem filterStepReplay : checkConcreteLeaf filterStepConstraints 0 filterStepBox = true := by decide
 
 /-- A rational barrier certificate proves every backward-Euler sample of 06 safe. -/
@@ -429,7 +427,7 @@ private theorem softplus_range {y z : ℝ} (h : Real.exp y = 1+Real.exp z) :
     rw [Real.exp_zero] at hb
     nlinarith only [ha,hb,mul_le_mul_of_nonneg_left Real.exp_one_gt_two.le (Real.exp_pos (max 0 z)).le]
 
-set_option maxHeartbeats 900000 in
+set_option maxHeartbeats 500000 in
 /-- The pull-up has enough drain voltage and overdrive to exceed the residual
 pull-down current even at the smallest aspect ratio in the 7 nm etch box. -/
 theorem bench02_asap7_inverter_snm_proved : Bench_02_asap7_finfet_inverter_snm realTF := by
@@ -822,7 +820,7 @@ private theorem startup_floor (t v : ℝ) (ht : 273 ≤ t) (ht' : t ≤ 373) (hv
   rw [sub_zero]; change _ ≤ (1/10000000000)*(f*Real.exp b)*(Real.exp (v/d)-1)
   linarith only [this]
 
-set_option maxHeartbeats 1600000 in
+set_option maxHeartbeats 1500000 in
 theorem bench04b_sige_bandgap_guarded_proved : Bench_04b_ihp_sige_bandgap_guarded_unsat realTF := by
   intro vdd t g sup iv ref vc f hfwdR mp f2 r2 mp2 e sk ic ib e2 sk2 ic2 ib2 vs ivs di box phys unsafeRef
   dsimp only [realTF] at box phys unsafeRef

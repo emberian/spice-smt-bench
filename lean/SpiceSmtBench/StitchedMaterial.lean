@@ -6,7 +6,6 @@ namespace SpiceSmtBench.Stitched
 open LineBounds Enclosed Microstrip StoredEnergy TransientWindows PolynomialEnvelope
 noncomputable section
 set_option maxRecDepth 30000
-set_option maxHeartbeats 10000000
 
 def weights : Fin 16 → Enclosed :=
   ![1,1,1,1,6/5,4/5,4/5,4/5,4/5,6/5,6/5,6/5,6/5,6/5,6/5,7/50]

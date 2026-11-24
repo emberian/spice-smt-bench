@@ -5,7 +5,6 @@ namespace SpiceSmtBench.Stitched
 open StoredEnergy
 noncomputable section
 set_option maxRecDepth 20000
-set_option maxHeartbeats 5000000
 set_option linter.unusedVariables false in
 section
 private def factor0 (p : Line) : ℝ := (p.lm * p.lm)
@@ -440,6 +439,7 @@ def e_mass (p : Components) : Fin 16 → Fin 16 → Enclosed :=
     ![0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, (p.lp)/2500, p.lm/2500, 0],
     ![0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, p.lm/2500, (p.ln)/2500, 0],
     ![0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, p.ret/2500]]
+set_option maxHeartbeats 600000 in
 @[simp] theorem value_mass (p : Components) (i j : Fin 16) : (e_mass p i j).val = mass (components p) i j := by
   fin_cases i <;> fin_cases j <;> simp [e_mass,mass,components]
 
@@ -460,6 +460,7 @@ def e_network (p : Components) : Fin 16 → Fin 16 → Enclosed :=
     ![0, 0, 0, 1, -1, 0, 0, 0, -1, 0, 0, 0, 0, -p.r/50, 0, 0],
     ![0, 1, 0, 0, -1, 0, 0, -1, 0, 0, 0, 0, 0, 0, -p.r/50, 0],
     ![0, 0, 0, 0, -1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, -1/5000]]
+set_option maxHeartbeats 400000 in
 @[simp] theorem value_network (p : Components) (i j : Fin 16) : (e_network p i j).val = network (components p) i j := by
   fin_cases i <;> fin_cases j <;> simp [e_network,network,components]
 def e_metric (p : Components) (i j : Fin 16) : Enclosed := 1000000000000*e_mass p i j

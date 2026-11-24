@@ -6,7 +6,6 @@ namespace SpiceSmtBench.Stitched
 open Microstrip LineBounds Enclosed StoredEnergy LeanCert.Core
 noncomputable section
 set_option maxRecDepth 30000
-set_option maxHeartbeats 1600000
 
 private theorem exp_value (x : Enclosed) : x.exp.val=Real.exp x.val := rfl
 

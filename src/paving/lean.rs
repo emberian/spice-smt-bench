@@ -269,7 +269,6 @@ private def sampleAt (k : Nat) : Sample :=
   ([{}] : List Sample).getD k ⟨.singleton 0, .singleton 0⟩
 set_option Elab.async false
 set_option maxRecDepth 32000
-set_option maxHeartbeats 10000000
 private abbrev Row (k : Nat) := ∀ s h : Bool, checkFace (sampleAt k) (sampleAt (k+1)) s h = true
 macro \"replay_row \" k:num : tactic =>
   `(tactic| first | exact checkedFaces ⟨$k,by decide⟩ | decide +kernel)
@@ -278,7 +277,7 @@ macro \"replay_row \" k:num : tactic =>
     );
     for k in 0..20 {
         out.push_str(&format!(
-            "private theorem row{k} : Row {k} := by replay_row {k}\n"
+            "set_option maxHeartbeats 280000 in\nprivate theorem row{k} : Row {k} := by replay_row {k}\n"
         ));
     }
     out.push_str(&format!("\ntheorem certified : Target realTF := by

@@ -5,7 +5,6 @@ namespace SpiceSmtBench.RingEnvelope
 open LeanCert.Core
 set_option Elab.async false
 set_option maxRecDepth 32000
-set_option maxHeartbeats 2000000
 
 -- These four-dimensional cells enclose stage voltage, successor, predecessor,
 -- and supply. Separate reductions bound the memory needed for replay.

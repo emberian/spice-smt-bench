@@ -181,7 +181,6 @@ private theorem within {old new a b : ℝ}
   · have := pb.2; rw [abs_of_pos (by linarith only [bad])] at this; linarith only [pa.2,step,this]
 
 set_option maxRecDepth 32000 in
-set_option maxHeartbeats 2000000 in
 theorem certified :
     Targets.Bench_08_gt2n_gaa_ring_oscillator_3stage_ode realTF := by
   intro v dt dl p1 n1 p2 n2 p3 n3 st

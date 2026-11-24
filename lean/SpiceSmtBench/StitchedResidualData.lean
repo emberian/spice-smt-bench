@@ -5,7 +5,6 @@ import SpiceSmtBench.SlotWindows
 namespace SpiceSmtBench.Stitched
 open TransientWindows PolynomialEnvelope StoredEnergy
 set_option maxRecDepth 30000
-set_option maxHeartbeats 4000000
 
 def zeroW : Window := ⟨0,0⟩
 def negW (w : Window) : Window := ⟨-w.hi,-w.lo⟩
@@ -40,6 +39,7 @@ def limits : Fin 16 → Int :=
     10000000000000,10000000000000,10000000000000,10000000000000,
     1000000000000,1000000000000,1000000000000,1000000000000,1000000000000,1000000000000,10500000000000]
 def stepCheck (k : Nat) := ∀ i : Fin 16, ∑ t : Fin 20, magnitudeW (cubicW k i t) ≤ limits i
+set_option maxHeartbeats 550000 in
 instance (k : Nat) : Decidable (stepCheck k) := inferInstanceAs (Decidable (∀ _ : Fin 16, _))
 def receiverCheck (k : Nat) := ∑ b : Fin 10, |traceData k b 4| ≤ 5000000
 instance (k : Nat) : Decidable (receiverCheck k) := inferInstanceAs (Decidable (_ ≤ (_ : Int)))
